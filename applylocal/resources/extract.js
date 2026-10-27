@@ -29,7 +29,8 @@
       || text(container.querySelector('legend,[data-prompt],.question-text,h1,h2,h3,h4'))))
     || label(el) || 'Unlabeled question');
   const globalProse = clean(all('p,[data-context],.scenario-text,[data-scenario],.instructions')
-    .filter(el => visible(el) && !el.closest('label,[role="option"],[role="timer"],.timer,.countdown'))
+    .filter(el => visible(el) && !el.closest('label,[role="option"],[role="timer"],.timer,.countdown')
+      && !group(el))
     .map(text).join(' '));
   const context = el => {
     const container = group(el);
@@ -91,7 +92,12 @@
   const visibleText = clean([document.body?.innerText, ...roots.slice(1).flatMap(root =>
     Array.from(root.children).filter(visible).map(text))].join(' ')).slice(0, 120000);
   const frames = all('iframe').filter(visible);
+  const pageMarker = clean(all('h1,h2,[aria-current="step"],.page-number,.step-number,[data-page-number]')
+    .filter(el => visible(el) && !group(el)).map(text).join(' '));
   return {questions, buttons, errors, text: visibleText,
+    page_marker: pageMarker,
+    busy: document.readyState === 'loading' || all('[aria-busy="true"]').some(visible)
+      || buttons.some(b => /^(?:loading|submitting|please wait|processing)[\s.\u2026!]*$/i.test(b.label)),
     completion_candidates: all('h1,h2,h3,p,[role="status"]').filter(visible).map(text),
     authentication: controls.some(el => el.type === 'password') || frames.some(el => /recaptcha|hcaptcha|challenges.cloudflare/.test(el.src)),
     visual: all('canvas,img[role="application"],[role="application"]').some(visible)};

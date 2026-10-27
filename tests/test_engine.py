@@ -11,7 +11,7 @@ class FakeAI:
     def __init__(self):
         self.calls = 0
 
-    def decide(self, model, question, threshold):
+    def decide(self, model, question, threshold, **kwargs):
         self.calls += 1
         return Answer((question.options[0].id,))
 
@@ -90,7 +90,7 @@ def test_attestation_requires_manual_even_with_saved_answer(browser):
 def test_model_failure_pauses_without_click(browser):
     browser.page.set_content('<fieldset><legend>Which action is safest?</legend><label><input type=radio name=q>Secure the area</label><label><input type=radio name=q>Ignore it</label></fieldset>')
     class BrokenAI:
-        def decide(self, *args):
+        def decide(self, *args, **kwargs):
             raise AssistanceRequired("Model unavailable")
     def ask(request):
         assert "unavailable" in request["message"]
@@ -99,30 +99,32 @@ def test_model_failure_pauses_without_click(browser):
     assert browser.page.locator('input:checked').count() == 0
 
 
-def test_uncertain_navigation_is_latched_until_manual_change():
+def test_uncertain_navigation_is_rechecked_without_user_input():
+    from applylocal.domain import NavigationUnconfirmed
     stop = threading.Event()
     snap = Snapshot("http://local", "", "", [], [Button("b", "Next")])
+    done = Snapshot("http://local", "", "Assessment complete", [], [], complete=True)
     class Browser:
         def __init__(self):
             self.stop = stop
             self.clicks = 0
+            self.rechecks = 0
         def snapshot(self):
             return snap
         def navigation(self, s):
             return snap.buttons[0], False
         def navigate(self, *args):
             self.clicks += 1
-            raise AssistanceRequired("Navigation not confirmed")
+            raise NavigationUnconfirmed("Navigation not confirmed")
+        def recheck_navigation(self, **kwargs):
+            self.rechecks += 1
+            return done if self.rechecks == 3 else None
     browser = Browser()
-    pauses = []
-    def ask(request):
-        pauses.append(request)
-        if len(pauses) == 2:
-            stop.set()
-        return UserReply()
-    assert run_engine(browser, ask=ask)[0] == "stopped"
+    result, events = run_engine(browser)
+    assert result == "complete"
     assert browser.clicks == 1
-    assert "previous navigation" in pauses[1]["message"]
+    assert browser.rechecks == 3
+    assert any(e["code"] == "recovered" for e in events)
 
 
 def test_no_model_for_bare_personal_label():

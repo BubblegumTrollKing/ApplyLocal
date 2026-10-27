@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 import re
 import shutil
@@ -12,8 +13,8 @@ from importlib.resources import files
 
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
-from .domain import (Answer, AssistanceRequired, Button, Option, Question, Snapshot,
-                     check_stop, validate_answer)
+from .domain import (Answer, AssistanceRequired, Button, NavigationUnconfirmed, Option,
+                     Question, RecheckRequired, Snapshot, check_stop, validate_answer)
 from .local_ai import loopback_url
 from .policy import page_restriction
 
@@ -28,6 +29,16 @@ COMPLETE = re.compile(r"(?:your (?:application|assessment|responses|answers) (?:
 
 def resource_text(name: str) -> str:
     return files("applylocal").joinpath("resources", name).read_text(encoding="utf-8")
+
+
+@dataclass
+class NavigationWatch:
+    before: Snapshot
+    button: Button
+    network_seen: bool = False
+    retried: bool = False
+    candidate: str = ""
+    stable_since: float = 0
 
 
 def find_browser() -> str:
@@ -70,6 +81,8 @@ class BrowserSession:
         self.browser = None
         self.page = None
         self._targets = {}
+        self._navigation_watch = None
+        self._request_listener = None
 
     def connect(self, endpoint: str) -> None:
         check_stop(self.stop)
@@ -81,6 +94,7 @@ class BrowserSession:
             raise AssistanceRequired("Cannot connect to the browser. Use Open browser, then Refresh tabs.")
 
     def close(self) -> None:
+        self._end_navigation_watch()
         if self.playwright:
             self.playwright.stop()
             self.playwright = None
@@ -120,10 +134,10 @@ class BrowserSession:
             handle = frame.evaluate_handle("id => window.__applylocal_state?.nodes.get(id) || null", local)
             element = handle.as_element()
             if element is None or not element.evaluate("el => el.isConnected"):
-                raise AssistanceRequired("The page changed. Recheck it before continuing.")
+                raise RecheckRequired("The page changed; reading its current controls again.")
             return element
         except (KeyError, PlaywrightError) as exc:
-            raise AssistanceRequired("The page changed. Recheck it before continuing.") from exc
+            raise RecheckRequired("The page changed; reading its current controls again.") from exc
 
     def snapshot(self) -> Snapshot:
         check_stop(self.stop)
@@ -131,7 +145,8 @@ class BrowserSession:
             raise AssistanceRequired("The assessment tab was closed.")
         self._targets = {}
         questions, buttons, errors, texts, completion_candidates = [], [], [], [], []
-        blocked, visual = "", False
+        blocked, visual, busy = "", False, False
+        markers = []
         for index, frame in enumerate(self.page.frames):
             if frame != self.page.main_frame:
                 try:
@@ -142,7 +157,7 @@ class BrowserSession:
             try:
                 raw = frame.evaluate(resource_text("extract.js"))
             except PlaywrightError as exc:
-                raise AssistanceRequired("The page is still loading or a frame is inaccessible. Recheck shortly.") from exc
+                raise RecheckRequired("The page is still loading; rechecking automatically.") from exc
             prefix = f"f{index}:"
 
             def target(local):
@@ -151,6 +166,8 @@ class BrowserSession:
                 return key
 
             texts.append(raw["text"])
+            markers.append(raw.get("page_marker", ""))
+            busy |= raw.get("busy", False)
             completion_candidates.extend(raw.get("completion_candidates", []))
             for q in raw["questions"]:
                 options = tuple(Option(target(o["id"]), o["label"], o["selected"], o["disabled"])
@@ -171,14 +188,15 @@ class BrowserSession:
             visual = True
         return Snapshot(self.page.url, self.page.title(), text, questions, buttons, errors,
                         blocked, bool(not questions and any(COMPLETE.fullmatch(t.strip())
-                                      for t in completion_candidates + [text])), visual)
+                                      for t in completion_candidates + [text])), visual,
+                        " | ".join(m for m in markers if m), busy)
 
     def apply(self, expected: Snapshot, question: Question, answer: Answer) -> Snapshot:
         validate_answer(question, answer)
         latest = self.snapshot()
         current = next((q for q in latest.questions if q.id == question.id), None)
         if latest.blocked or latest.structure != expected.structure or current is None or current != question:
-            raise AssistanceRequired("The question or its state changed while choosing an answer. Recheck it.")
+            raise RecheckRequired("The question or its state changed; re-reading before applying the answer.")
         check_stop(self.stop)
         try:
             node = self._node(question.id)
@@ -213,7 +231,7 @@ class BrowserSession:
                 node.fill(answer.value or "", timeout=2000)
                 node.dispatch_event("change")
         except PlaywrightError as exc:
-            raise AssistanceRequired("The control could not be operated. It may be covered, disabled, or replaced.") from exc
+            raise RecheckRequired("The control could not be operated; checking for a replaced or temporarily covered control.") from exc
         # Read back live controls, not the model's claimed success.
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
@@ -228,7 +246,7 @@ class BrowserSession:
                 elif after.value == answer.value:
                     return observed
             self.page.wait_for_timeout(80)
-        raise AssistanceRequired("The answer did not persist or the page changed before it could be verified.")
+        raise RecheckRequired("The answer did not persist or the page changed; checking and recovering the answer.")
 
     @staticmethod
     def navigation(snapshot: Snapshot) -> tuple[Button | None, bool]:
@@ -236,54 +254,112 @@ class BrowserSession:
         final_buttons = [b for b in snapshot.buttons if FINAL.fullmatch(b.label.strip())]
         candidates = next_buttons or final_buttons
         if len(candidates) > 1:
-            raise AssistanceRequired("Several navigation controls match. Navigate manually, then recheck.")
+            raise RecheckRequired("Several navigation controls match; rechecking after the page settles.")
         return (candidates[0], not bool(next_buttons)) if candidates else (None, False)
 
     def navigate(self, expected: Snapshot, button: Button, *, timeout: float = 8) -> Snapshot:
         latest = self.snapshot()
-        if latest.blocked or latest.structure != expected.structure:
-            raise AssistanceRequired("The page changed before navigation. Recheck it.")
+        if latest.blocked or latest.structure != expected.structure or latest.questions != expected.questions:
+            raise RecheckRequired("The page changed before navigation; rechecking automatically.")
         if latest.errors:
             raise AssistanceRequired("The page reports validation errors. Correct them in the browser.")
+        if button.disabled or latest.busy:
+            raise RecheckRequired("Waiting for the page's navigation control to become ready.")
+        self._begin_navigation_watch(latest, button)
         check_stop(self.stop)
         try:
             self._node(button.id).click(timeout=2000, no_wait_after=True)
         except PlaywrightError as exc:
-            raise AssistanceRequired("Navigation could not be clicked. Check the page before retrying.") from exc
-        # Never retry Next/Submit automatically: the first click may have reached the server.
+            raise NavigationUnconfirmed("Navigation needs an automatic recheck after an interrupted click.") from exc
+        after = self.recheck_navigation(timeout=timeout, allow_retry=False)
+        if after is not None:
+            if after.errors:
+                raise AssistanceRequired("The page reports validation errors after navigation.")
+            return after
+        raise NavigationUnconfirmed("Navigation was not confirmed; rechecking automatically.")
+
+    def _begin_navigation_watch(self, before, button):
+        self._end_navigation_watch()
+        self._navigation_watch = NavigationWatch(before, button)
+
+        def request_seen(request):
+            if self._navigation_watch and (request.resource_type in {"document", "xhr", "fetch"}
+                                           or request.method != "GET"):
+                self._navigation_watch.network_seen = True
+        self._request_listener = request_seen
+        self.page.on("request", request_seen)
+
+    def _end_navigation_watch(self):
+        if self._request_listener and self.page:
+            self.page.remove_listener("request", self._request_listener)
+        self._request_listener = None
+        self._navigation_watch = None
+
+    @staticmethod
+    def _same_answers(left, right):
+        def states(snapshot):
+            return [(q.prompt, q.value, [o.label for o in q.options if o.selected])
+                    for q in snapshot.questions]
+        return states(left) == states(right)
+
+    def recheck_navigation(self, *, timeout: float = 2, allow_retry: bool = True) -> Snapshot | None:
+        """Observe late transitions. Retry a local Next once only if no request was seen.
+
+        A Submit is never repeated. A request (even a failed one) means the server
+        might have processed the first click, so recovery stays observational.
+        """
+        watch = self._navigation_watch
+        if watch is None:
+            return self.snapshot()
         deadline = time.monotonic() + timeout
-        candidate = None
-        stable_since = time.monotonic()
+        unchanged_since = time.monotonic()
         while time.monotonic() < deadline:
             check_stop(self.stop)
             try:
                 after = self.snapshot()
-                if after.blocked:
+                if after.blocked or after.errors or after.complete:
+                    self._end_navigation_watch()
                     return after
-                if after.errors:
-                    raise AssistanceRequired("The page reports validation errors after navigation.")
-                if after.complete:
-                    return after
-                if after.content_signature != latest.content_signature:
-                    if after.content_signature != candidate:
-                        candidate = after.content_signature
-                        stable_since = time.monotonic()
-                    elif time.monotonic() - stable_since >= 0.25:
+                if after.content_signature != watch.before.content_signature and not after.busy:
+                    # Do not accept a blank/loading interstitial as a finished page.
+                    ready = bool(after.questions or any(NEXT.fullmatch(b.label.strip())
+                                 or FINAL.fullmatch(b.label.strip()) for b in after.buttons if not b.disabled))
+                    if ready and after.content_signature != watch.candidate:
+                        watch.candidate = after.content_signature
+                        watch.stable_since = time.monotonic()
+                    elif ready and time.monotonic() - watch.stable_since >= 0.25:
+                        self._end_navigation_watch()
                         return after
-            except PlaywrightError:
-                pass
+                    unchanged_since = time.monotonic()
+                else:
+                    watch.candidate = ""
+                    if (allow_retry and not watch.retried and not watch.network_seen
+                            and not FINAL.fullmatch(watch.button.label.strip())
+                            and not after.busy and self._same_answers(watch.before, after)
+                            and time.monotonic() - unchanged_since >= 0.75):
+                        current, final = self.navigation(after)
+                        if (current and not final and not current.disabled
+                                and current.label == watch.button.label
+                                and after.content_signature == watch.before.content_signature):
+                            watch.retried = True
+                            check_stop(self.stop)
+                            self._node(current.id).click(timeout=2000, no_wait_after=True)
+            except (PlaywrightError, RecheckRequired):
+                unchanged_since = time.monotonic()
             self.page.wait_for_timeout(100)
-        raise AssistanceRequired("Navigation was not confirmed. Inspect the browser; the click was not repeated.")
+        return None
 
     def navigate_visual_click(self, expected: Snapshot, button: Button) -> None:
         latest = self.snapshot()
         if latest.blocked or latest.errors or latest.structure != expected.structure:
-            raise AssistanceRequired("The page changed before visual navigation.")
+            raise RecheckRequired("The page changed before visual navigation; rechecking automatically.")
+        if button.disabled or latest.busy:
+            raise RecheckRequired("Waiting for the visual page's navigation control to become ready.")
         check_stop(self.stop)
         try:
             self._node(button.id).click(timeout=2000, no_wait_after=True)
         except PlaywrightError as exc:
-            raise AssistanceRequired("Visual page navigation could not be clicked.") from exc
+            raise NavigationUnconfirmed("Visual page navigation needs an automatic recheck.") from exc
 
     def capture(self) -> tuple[bytes, int, int]:
         check_stop(self.stop)

@@ -4,7 +4,8 @@ from hashlib import sha256
 import threading
 import time
 
-from .domain import Answer, AssistanceRequired, Option, Question, check_stop, normalize
+from .domain import (Answer, AssistanceRequired, NavigationUnconfirmed, Option, Question,
+                     RecheckRequired, check_stop, normalize)
 from .policy import page_restriction, question_restriction
 
 
@@ -39,6 +40,7 @@ class VisualRead:
     image_hash: str
     width: int
     height: int
+    last_navigation_hash: str = ""
 
 
 class VisionFallback:
@@ -76,7 +78,7 @@ class VisionFallback:
     def apply(self, browser, read: VisualRead, answer: Answer) -> None:
         image, width, height = browser.capture()
         if (width, height) != (read.width, read.height) or sha256(image).hexdigest() != read.image_hash:
-            raise AssistanceRequired("The screen changed during visual reasoning. Recheck it.")
+            raise RecheckRequired("The screen changed during visual reasoning; rechecking before clicking.")
         x, y = read.points[answer.option_ids[0]]
         check_stop(self.stop)
         browser.click_point(x, y, width, height)
@@ -97,6 +99,13 @@ class VisionFallback:
         # Next must be an unambiguous DOM control; never guess a submit coordinate.
         # DOM navigation can leave the same canvas and URL in place, so inspect its content too.
         browser.navigate_visual_click(snapshot, button)
+        after = self.observe_navigation(browser, snapshot, read, timeout=timeout)
+        if after is not None:
+            return after
+        raise NavigationUnconfirmed("Visual page navigation needs an automatic recheck.")
+
+    def observe_navigation(self, browser, snapshot, read: VisualRead, *, timeout: float = 2):
+        """Check visual content again without sending another navigation click."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             check_stop(self.stop)
@@ -104,13 +113,21 @@ class VisionFallback:
             after = browser.snapshot()
             if after.errors:
                 raise AssistanceRequired("The page rejected the visual answer.")
-            if after.complete or after.blocked or after.structure != snapshot.structure:
+            if after.complete or after.blocked:
+                return after
+            if after.busy:
+                continue
+            if after.questions and after.content_signature != snapshot.content_signature:
                 return after
             image, _, _ = browser.capture()
-            if sha256(image).hexdigest() != read.image_hash:
+            current_hash = sha256(image).hexdigest()
+            if current_hash not in {read.image_hash, read.last_navigation_hash}:
+                read.last_navigation_hash = current_hash
                 new = self.read(browser)
-                if normalize(new.question.prompt) != normalize(read.question.prompt):
+                if (normalize(new.question.prompt) != normalize(read.question.prompt)
+                        or [normalize(o.label) for o in new.question.options]
+                        != [normalize(o.label) for o in read.question.options]):
                     return after
-                # Avoid repeatedly running inference on an unchanged selected canvas.
-                break
-        raise AssistanceRequired("Visual page navigation was not confirmed. Inspect the browser.")
+                # Hover/cosmetic changes do not end observation. Remember the
+                # checked image so an unchanged canvas does not repeat inference.
+        return None

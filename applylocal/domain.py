@@ -15,6 +15,14 @@ class AssistanceRequired(Exception):
     """A condition that cannot be resolved dependably without the user."""
 
 
+class RecheckRequired(AssistanceRequired):
+    """Re-observe a transient/stale state before asking the user for help."""
+
+
+class NavigationUnconfirmed(AssistanceRequired):
+    """A navigation attempt needs observation, not another unconditional click."""
+
+
 def check_stop(stop: threading.Event) -> None:
     if stop.is_set():
         raise Stopped()
@@ -76,6 +84,8 @@ class Snapshot:
     blocked: str = ""
     complete: bool = False
     visual: bool = False
+    page_marker: str = ""
+    busy: bool = False
 
     @property
     def structure(self) -> str:
@@ -85,7 +95,11 @@ class Snapshot:
 
     @property
     def content_signature(self) -> str:
-        return digest([self.url, [q.signature for q in self.questions], self.complete])
+        # Replacing DOM nodes or changing a button caption is not a new question page.
+        return digest([self.url, self.page_marker,
+                       [(q.prompt, q.kind, q.context,
+                         [(o.label, o.disabled) for o in q.options]) for q in self.questions],
+                       self.complete])
 
 
 @dataclass(frozen=True)

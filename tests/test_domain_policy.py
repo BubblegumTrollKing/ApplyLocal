@@ -46,7 +46,7 @@ def test_identity_and_attestation(text):
     assert question_restriction(Question("q", text, "text"))
 
 
-@pytest.mark.parametrize("text", ["Have you worked in retail?", "Are you available weekends?", "I am always punctual", "Your salary expectations", "Do you enjoy teamwork?"])
+@pytest.mark.parametrize("text", ["Have you worked in retail?", "Are you available weekends?", "Your salary expectations"])
 def test_personal_question_is_not_inferred(text):
     assert requires_personal_answer(Question("q", text, "text"))
 

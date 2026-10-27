@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 
@@ -35,9 +36,10 @@ class Settings:
     text_model: str = "qwen2.5:7b"
     vision_model: str = "qwen3-vl:4b"
     vision: bool = True
-    auto_submit: bool = False
+    auto_submit: bool = True
     confidence: float = 0.90
     max_pages: int = 150
+    automation_version: int = 2
 
     def __post_init__(self):
         for key in ("endpoint", "ollama", "text_model", "vision_model"):
@@ -55,6 +57,10 @@ class Settings:
         if not path.exists():
             return cls()
         raw = json.loads(path.read_text(encoding="utf-8"))
+        # Upgrade the old review-every-run default to hands-off operation. Later
+        # explicit checkbox choices are retained in versioned settings files.
+        if "automation_version" not in raw:
+            raw["auto_submit"] = True
         return cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
 
     def save(self, path: Path) -> None:
@@ -112,8 +118,11 @@ class Profile:
     def lookup(self, q: Question) -> Answer | None:
         values = self.answers.get(self.key(q))
         if values is None:
+            field_prompt = re.sub(r"^(?:please )?(?:(?:enter|provide|type|confirm) (?:your )?|"
+                                  r"what (?:is|are) (?:your )?|your )", "", normalize(q.prompt))
+            field_prompt = re.sub(r"\s*\((?:required|optional)\)$", "", field_prompt)
             field_name = next((key for key, names in ALIASES.items()
-                               if normalize(q.prompt) in names), None)
+                               if field_prompt in names), None)
             if field_name and self.facts.get(field_name):
                 values = [self.facts[field_name]]
         if values is None:
@@ -132,3 +141,15 @@ class Profile:
             answer = Answer(value=values[0], source="profile")
         validate_answer(q, answer)
         return answer
+
+    def recall(self, q: Question) -> Answer | None:
+        from .memory import fast_recall
+        try:
+            exact = self.lookup(q)
+        except AssistanceRequired:
+            exact = None  # A disabled/changed old choice should trigger new reasoning.
+        return exact or fast_recall(q, self.answers)
+
+    def related(self, q: Question) -> list[dict]:
+        from .memory import relevant_memories
+        return relevant_memories(q, self.answers)

@@ -12,6 +12,7 @@ import tkinter as tk
 from tkinter import messagebox, scrolledtext, ttk
 import webbrowser
 
+from . import __version__
 from .audit import Audit
 from .browser import BrowserSession, launch_browser
 from .domain import Answer, AssistanceRequired, Stopped
@@ -23,7 +24,7 @@ from .storage import ALIASES, Profile, Settings, data_directory
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("ApplyLocal · local questionnaire assistant")
+        self.title(f"ApplyLocal {__version__} · automatic questionnaire assistant")
         self.geometry(f"{min(1000, self.winfo_screenwidth()-80)}x{min(800, self.winfo_screenheight()-80)}")
         self.minsize(800, 650)
         self.folder = data_directory()
@@ -55,7 +56,7 @@ class Application(tk.Tk):
         outer = ttk.Frame(self, padding=18)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, text="ApplyLocal", font=("Segoe UI", 24, "bold")).pack(anchor="w")
-        ttk.Label(outer, text="Free local AI · verified browser actions · your facts stay on this computer").pack(anchor="w", pady=(0, 12))
+        ttk.Label(outer, text="Free local AI · automatic answers and memory · automatic page rechecks").pack(anchor="w", pady=(0, 12))
 
         self.setup_section = ttk.Frame(outer)
         self.setup_section.pack(fill="x")
@@ -112,7 +113,7 @@ class Application(tk.Tk):
 
         self.help_frame = ttk.LabelFrame(outer, text="Your input", padding=10)
         self.help_frame.pack(fill="x")
-        self.help_message = ttk.Label(self.help_frame, text="The agent will pause here if it needs you.", wraplength=900)
+        self.help_message = ttk.Label(self.help_frame, text="Workplace and personality answers are automatic and remembered. Only missing facts or restricted steps need you.", wraplength=900)
         self.help_message.pack(anchor="w")
         self.answer_frame = ttk.Frame(self.help_frame)
         self.answer_frame.pack(fill="x")
@@ -294,8 +295,7 @@ class Application(tk.Tk):
                         widget.configure(state="disabled")
             else:
                 ttk.Entry(self.answer_frame, textvariable=choice).pack(fill="x", pady=5)
-            remember = tk.BooleanVar(value=False)
-            ttk.Checkbutton(self.answer_frame, text="Remember my answer for this exact question and choices (saved locally)", variable=remember).pack(anchor="w")
+            ttk.Label(self.answer_frame, text="Answers are remembered automatically on this computer and used for related questions.").pack(anchor="w")
             def send():
                 ids = tuple(k for k, v in checks.items() if v.get()) if checks else ((choice.get(),) if choice.get() else ())
                 answer = Answer(ids if question.options else (), None if question.options else choice.get(), "user")
@@ -305,7 +305,7 @@ class Application(tk.Tk):
                 except AssistanceRequired as exc:
                     messagebox.showinfo("Answer needed", str(exc))
                     return
-                self.reply(UserReply(answer, remember.get()))
+                self.reply(UserReply(answer))
             ttk.Button(self.answer_frame, text="Use this answer and continue", command=send).pack(side="left", pady=5)
         elif request["submit"]:
             ttk.Button(self.answer_frame, text="Submit this questionnaire", command=lambda: self.reply(UserReply(proceed=True))).pack(side="left", pady=5)
@@ -372,7 +372,7 @@ class Application(tk.Tk):
             ttk.Entry(dialog, textvariable=value, width=45).grid(row=row, column=1, padx=12, pady=3)
             entries[field] = value
         row = len(entries) + 1
-        ttk.Label(dialog, text=f"{len(self.profile.answers)} exact question answers saved.").grid(row=row, column=0, columnspan=2, pady=8)
+        ttk.Label(dialog, text=f"{len(self.profile.answers)} answers saved automatically for reuse and related-question reasoning.").grid(row=row, column=0, columnspan=2, pady=8)
         def save():
             try:
                 self.profile.facts = {k: v.get().strip() for k, v in entries.items() if v.get().strip()}

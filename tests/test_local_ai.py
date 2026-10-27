@@ -64,7 +64,7 @@ def test_real_http_request_and_schema(fake_ollama):
     assert "api_key" not in body
 
 
-@pytest.mark.parametrize("update", [{"option_ids": ["invented"]}, {"confidence": 0.5}, {"kind": "personal"}, {"kind": "human_only"}, {"option_ids": ["a", "b"]}, {"unexpected": True}])
+@pytest.mark.parametrize("update", [{"option_ids": ["invented"]}, {"kind": "personal"}, {"kind": "human_only"}, {"option_ids": ["a", "b"]}, {"unexpected": True}])
 def test_model_failures_fail_closed(fake_ollama, update):
     url, state = fake_ollama
     state["reply"].update(update)
@@ -114,3 +114,50 @@ def test_stop_during_slow_inference(fake_ollama):
         ai.decide("test:local", q(), 0.9)
     assert time.monotonic() - started < 0.8
     timer.join()
+
+
+def test_subjective_personality_is_answered_automatically(fake_ollama):
+    url, state = fake_ollama
+    state["reply"].update(kind="personality", confidence=0.98)
+    item = Question("q", "Are you traditional?", "radio", (Option("a", "Yes"), Option("b", "No")))
+    assert LocalAI(url, threading.Event()).decide("test:local", item, 0.9).option_ids == ("a",)
+    assert len([r for r in state["requests"] if r[0] == "/api/chat"]) == 1
+
+
+def test_uncertainty_gets_automatic_review_then_best_supported_choice(fake_ollama):
+    url, state = fake_ollama
+    state["reply"]["confidence"] = 0.55
+    ai = LocalAI(url, threading.Event())
+    assert ai.decide("test:local", q(), 0.9).option_ids == ("a",)
+    chats = [r[1] for r in state["requests"] if r[0] == "/api/chat"]
+    assert len(chats) == 2
+    assert "Review the question" in chats[1]["messages"][0]["content"]
+
+
+def test_misclassified_spill_question_is_reconsidered_without_user(fake_ollama, monkeypatch):
+    url, _ = fake_ollama
+    ai = LocalAI(url, threading.Event())
+    replies = iter([
+        {"kind": "personal", "option_ids": [], "value": None, "confidence": 0.98, "reason": "First person"},
+        {"kind": "knowledge", "option_ids": ["a"], "value": None, "confidence": 0.98, "reason": "Safe response"},
+    ])
+    monkeypatch.setattr(ai, "structured", lambda *args: next(replies))
+    assert ai.decide("test:local", q(), 0.9).option_ids == ("a",)
+
+
+def test_relevant_answer_history_is_sent_in_same_call(fake_ollama):
+    url, state = fake_ollama
+    history = [{"question": "I like teamwork", "selected": ["Agree"]}]
+    LocalAI(url, threading.Event()).decide("test:local", q(), 0.9, memories=history)
+    chats = [r[1] for r in state["requests"] if r[0] == "/api/chat"]
+    assert len(chats) == 1
+    assert json.loads(chats[0]["messages"][1]["content"])["answer_history"] == history
+    assert chats[0]["options"]["num_predict"] == 512
+
+
+def test_factual_unknown_never_sent_to_model(fake_ollama):
+    url, state = fake_ollama
+    item = Question("q", "Are you available weekends?", "radio", (Option("a", "Yes"), Option("b", "No")))
+    with pytest.raises(AssistanceRequired, match="actual personal fact"):
+        LocalAI(url, threading.Event()).decide("test:local", item, 0.9)
+    assert state["requests"] == []

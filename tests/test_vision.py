@@ -88,3 +88,20 @@ def test_out_of_viewport_visual_target_rejected():
             return b"image", 1000, 700
     with pytest.raises(AssistanceRequired, match="outside"):
         VisionFallback(BadVision(), "local", threading.Event(), 0.9).read(Browser())
+
+
+@pytest.mark.browser
+def test_late_visual_navigation_rechecks_without_reclicking(browser):
+    from applylocal.domain import NavigationUnconfirmed
+    canvas_page(browser)
+    browser.page.locator('button').evaluate('''el => el.onclick=()=>{
+        window.nextClicks=(window.nextClicks||0)+1;
+        setTimeout(()=>document.body.innerHTML='<h1>Assessment complete</h1>',450);
+    }''')
+    visual = VisionFallback(ScriptedVision(), "local:vision", browser.stop, 0.9)
+    read = visual.read(browser)
+    snapshot = browser.snapshot()
+    with pytest.raises(NavigationUnconfirmed):
+        visual.navigate(browser, snapshot, snapshot.buttons[0], read, timeout=0.1)
+    assert visual.observe_navigation(browser, snapshot, read, timeout=2).complete
+    assert browser.page.evaluate('window.nextClicks') == 1

@@ -6,10 +6,10 @@ from applylocal.storage import Profile, Settings
 pytestmark = pytest.mark.browser
 
 
-def test_answer_erased_by_later_field_is_detected_before_next(browser):
+def test_answer_erased_by_later_field_is_restored_automatically(browser):
     browser.page.set_content('''<label>Email address<input id="email"></label>
     <label>First name<input onchange="email.value=''"></label>
-    <button onclick="window.clicked=true">Next</button>''')
+    <button onclick="window.clicked=true;document.body.innerHTML=\'<h1>Assessment complete</h1>\'">Submit</button>''')
     reasons = []
     def ask(request):
         reasons.append(request["message"])
@@ -17,9 +17,9 @@ def test_answer_erased_by_later_field_is_detected_before_next(browser):
         return UserReply()
     engine = Engine(browser, None, Settings(), Profile({"email": "real@example.test", "first_name": "Real"}),
                     browser.stop, lambda e: None, ask)
-    assert engine.run() == "stopped"
-    assert "previously verified answer changed" in reasons[0]
-    assert browser.page.evaluate("!!window.clicked") is False
+    assert engine.run() == "complete"
+    assert reasons == []
+    assert browser.page.evaluate("!!window.clicked") is True
 
 
 def test_mixed_visual_question_is_not_silently_skipped(browser):
