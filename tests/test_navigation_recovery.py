@@ -102,3 +102,11 @@ def test_unresolved_navigation_stops_after_bounded_observation():
                     lambda r: pytest.fail("Recovery must not require a recheck button"))
     engine.navigation_recovery_seconds = 0
     assert engine.run() == "stalled"
+
+
+def test_submit_status_heading_does_not_unlock_a_second_submission(browser):
+    browser.page.set_content('''<h1>Assessment</h1><label>Email address<input value="actual@example.test"></label>
+    <button onclick="window.clicks=(window.clicks||0)+1;document.querySelector('h1').textContent='Saving answers'">Submit</button>''')
+    unconfirmed_click(browser, timeout=0.4)
+    assert browser.recheck_navigation(timeout=1.1) is None
+    assert browser.page.evaluate("window.clicks") == 1

@@ -320,7 +320,11 @@ class BrowserSession:
                 if after.blocked or after.errors or after.complete:
                     self._end_navigation_watch()
                     return after
-                if after.content_signature != watch.before.content_signature and not after.busy:
+                transitioned = after.content_signature != watch.before.content_signature
+                if (FINAL.fullmatch(watch.button.label.strip())
+                        and after.question_content_signature == watch.before.question_content_signature):
+                    transitioned = False
+                if transitioned and not after.busy:
                     # Do not accept a blank/loading interstitial as a finished page.
                     ready = bool(after.questions or any(NEXT.fullmatch(b.label.strip())
                                  or FINAL.fullmatch(b.label.strip()) for b in after.buttons if not b.disabled))

@@ -101,6 +101,12 @@ class Snapshot:
                          [(o.label, o.disabled) for o in q.options]) for q in self.questions],
                        self.complete])
 
+    @property
+    def question_content_signature(self) -> str:
+        # A heading/status update after Submit must not make the same form a
+        # "new page" eligible for another submission. Ignore node IDs and state.
+        return digest([(q.prompt, q.kind, [o.label for o in q.options]) for q in self.questions])
+
 
 @dataclass(frozen=True)
 class Answer:
