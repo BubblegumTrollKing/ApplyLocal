@@ -1,0 +1,134 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+import json
+import os
+from pathlib import Path
+import tempfile
+
+from .domain import Answer, AssistanceRequired, Question, normalize, validate_answer
+
+
+def data_directory() -> Path:
+    root = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local" / "share")) / "ApplyLocal"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def atomic_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=path.name, dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(value, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+@dataclass
+class Settings:
+    endpoint: str = "http://127.0.0.1:9222"
+    ollama: str = "http://127.0.0.1:11434"
+    text_model: str = "qwen2.5:7b"
+    vision_model: str = "qwen3-vl:4b"
+    vision: bool = True
+    auto_submit: bool = False
+    confidence: float = 0.90
+    max_pages: int = 150
+
+    def __post_init__(self):
+        for key in ("endpoint", "ollama", "text_model", "vision_model"):
+            if not isinstance(getattr(self, key), str):
+                raise ValueError("Local addresses and model names must be text")
+        if type(self.vision) is not bool or type(self.auto_submit) is not bool:
+            raise ValueError("Invalid checkbox setting")
+        if not isinstance(self.confidence, (int, float)) or not 0 < self.confidence <= 1:
+            raise ValueError("Confidence must be greater than zero and at most one")
+        if type(self.max_pages) is not int or not 1 <= self.max_pages <= 500:
+            raise ValueError("Page limit must be between 1 and 500")
+
+    @classmethod
+    def load(cls, path: Path) -> Settings:
+        if not path.exists():
+            return cls()
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        return cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
+
+    def save(self, path: Path) -> None:
+        atomic_json(path, asdict(self))
+
+
+ALIASES = {
+    "first_name": {"first name", "given name"},
+    "last_name": {"last name", "surname", "family name"},
+    "full_name": {"full name", "name", "legal name"},
+    "email": {"email", "email address", "e-mail", "your email address"},
+    "phone": {"phone", "phone number", "telephone", "mobile number"},
+    "city": {"city", "your city"},
+    "state": {"state", "state/province", "province"},
+    "postal_code": {"zip", "zip code", "postal code"},
+    "country": {"country", "country of residence"},
+}
+
+
+@dataclass
+class Profile:
+    facts: dict[str, str] = field(default_factory=dict)
+    # Answers are keyed by exact normalized question AND available options.
+    answers: dict[str, list[str]] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, path: Path) -> Profile:
+        if not path.exists():
+            return cls()
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or not all(isinstance(raw.get(k, {}), dict)
+                                              for k in ("facts", "answers")):
+            raise ValueError("Invalid profile file")
+        profile = cls(raw.get("facts", {}), raw.get("answers", {}))
+        if not all(isinstance(k, str) and isinstance(v, str) for k, v in profile.facts.items()):
+            raise ValueError("Profile facts must be text")
+        if not all(isinstance(k, str) and isinstance(v, list)
+                   and all(isinstance(s, str) for s in v) for k, v in profile.answers.items()):
+            raise ValueError("Saved answers must be lists of text")
+        return profile
+
+    def save(self, path: Path) -> None:
+        atomic_json(path, asdict(self))
+
+    @staticmethod
+    def key(q: Question) -> str:
+        return json.dumps([normalize(q.prompt), q.kind,
+                           [normalize(o.label) for o in q.options], normalize(q.context)], ensure_ascii=False)
+
+    def remember(self, q: Question, answer: Answer) -> None:
+        validate_answer(q, answer)
+        values = [o.label for o in q.options if o.id in answer.option_ids] if q.options else [answer.value or ""]
+        self.answers[self.key(q)] = values
+
+    def lookup(self, q: Question) -> Answer | None:
+        values = self.answers.get(self.key(q))
+        if values is None:
+            field_name = next((key for key, names in ALIASES.items()
+                               if normalize(q.prompt) in names), None)
+            if field_name and self.facts.get(field_name):
+                values = [self.facts[field_name]]
+        if values is None:
+            return None
+        if q.options:
+            ids = []
+            for value in values:
+                matches = [o for o in q.options if normalize(o.label) == normalize(value)]
+                if len(matches) != 1:
+                    raise AssistanceRequired("A saved answer no longer matches a unique option.")
+                ids.append(matches[0].id)
+            answer = Answer(tuple(ids), source="profile")
+        else:
+            if not values:
+                raise AssistanceRequired("A saved text answer is empty. Enter your answer again.")
+            answer = Answer(value=values[0], source="profile")
+        validate_answer(q, answer)
+        return answer

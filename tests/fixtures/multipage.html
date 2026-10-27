@@ -1,0 +1,7 @@
+<!doctype html><meta charset="utf-8"><title>SPA questionnaire</title>
+<main id="content"></main><script>
+window.nextClicks=0;window.submits=0;
+content.innerHTML='<fieldset><legend>Which action is safest near a spill?</legend><label><input type="radio" name="q" value="a" required>Secure the area</label><label><input type="radio" name="q" value="b">Ignore it</label></fieldset><button onclick="next()">Next</button>';
+function next(){window.nextClicks++;if(!document.querySelector('input:checked'))return;setTimeout(()=>{content.innerHTML='<label for="email">Email address</label><input id="email" type="email" required><button onclick="submit()">Submit</button>'},120)}
+function submit(){window.submits++;const input=document.querySelector('input');if(!input.checkValidity()){input.setAttribute('aria-invalid','true');return}content.innerHTML='<h1>Thank you for completing the assessment.</h1>'}
+</script>

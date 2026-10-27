@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>ARIA layout</title>
+<style>[role=combobox]{min-height:30px;width:200px;border:1px solid black}</style>
+<h2 id="prompt">How should a worker respond to a spill?</h2>
+<div role="radiogroup" aria-labelledby="prompt">
+<div tabindex="0" role="radio" aria-checked="false" onclick="choose(this)">Ignore it</div>
+<div tabindex="0" role="radio" aria-checked="false" onclick="choose(this)">Secure the area</div>
+</div>
+<label id="location">Country</label><div role="combobox" aria-labelledby="location" aria-controls="countries" onclick="countries.hidden=false" tabindex="0"></div>
+<div id="countries" role="listbox" hidden>
+<div role="option" aria-selected="false" onclick="pick(this)">United States</div>
+<div role="option" aria-selected="false" onclick="pick(this)">Canada</div>
+</div>
+<button type="button">Continue</button>
+<script>
+function choose(el){for(const child of el.parentNode.children)child.setAttribute('aria-checked',child===el?'true':'false')}
+function pick(el){for(const child of countries.children)child.setAttribute('aria-selected',child===el?'true':'false');document.querySelector('[role=combobox]').textContent=el.textContent;countries.hidden=true}
+</script>

@@ -2,7 +2,7 @@
 
 A free, MIT-licensed Windows desktop application that fills routine employment questionnaires using local AI and verifies browser actions. No account with an AI provider, subscription, API key, or per-question charge is required. Model downloads happen once; inference stays on the computer.
 
-**Start with [QUICK_START.md](QUICK_START.md).** This source distribution includes the full application, a local practice questionnaire, automated tests, and a Windows executable build/release pipeline. It does **not** include a prebuilt or Windows-tested `.exe`. See [the verification report](docs/VERIFICATION.md) for the exact checks run while preparing this distribution.
+**Start with [QUICK_START.md](QUICK_START.md).** [Windows downloads](https://github.com/BubblegumTrollKing/ApplyLocal/releases) appear after the Windows CI checks pass. Download the portable ZIP there and run `ApplyLocal.exe`; Python is bundled. Source archives contain the application, practice questionnaire, tests and build pipeline. The [verification report](docs/VERIFICATION.md) records the initial Linux baseline; each Windows release includes its own test evidence and binary checksum.
 
 ## What it does
 
@@ -64,7 +64,7 @@ No Playwright browser download is needed for normal use: ApplyLocal uses your in
 
 The workflow installs dependencies, runs the real Chromium suite, smoke-tests the source GUI, bundles Python/Tk/Playwright's driver with PyInstaller, then smoke-tests the **frozen executable's GUI and actual Edge/Chrome CDP connection** on Windows. Artifacts are withheld if any check fails. Test evidence is uploaded separately. It never needs model weights or access to a live assessment to build.
 
-Pushing a version tag such as `v1.0.0` also creates a GitHub Release with the portable ZIP and source archive. A release ZIP may then be downloaded without running the build again. This source delivery has not been pushed to a repository and no Actions run has been triggered from this chat.
+Successful builds on `main` automatically publish a prerelease named for the source commit, containing the `.exe`, portable ZIP, source archive, license notices and Windows test evidence. Version tags such as `v1.0.0` publish a regular release. Failed tests or executable smoke checks prevent publication. No model weights are included in the downloads.
 
 The workflow uses standard GitHub-hosted runners. GitHub documents free use of standard runners for public repositories; artifact storage has account allowances, so keep only needed artifacts or use the local build route to avoid hosted-service billing. Builds are unsigned; Windows may display a publisher/reputation prompt. No paid signing certificate is needed to build or run the app.
 

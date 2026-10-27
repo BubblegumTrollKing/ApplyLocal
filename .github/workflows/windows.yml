@@ -1,0 +1,109 @@
+name: Test and build Windows application
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install pinned dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Install test browser (not shipped in application)
+        run: python -m playwright install chromium
+      - name: Static checks
+        run: python -m ruff check .
+      - name: Tests
+        run: python -m pytest -q --junitxml=test-results.xml
+      - name: Source GUI smoke test
+        run: python -m applylocal --gui-smoke --report source-smoke.json
+      - name: Build Windows exe
+        run: python -m PyInstaller --clean --noconfirm ApplyLocal.spec
+      - name: Collect distribution license notices
+        run: python scripts/collect_licenses.py
+      - name: Frozen executable smoke test
+        shell: pwsh
+        run: |
+          $app = Start-Process -FilePath '.\dist\ApplyLocal.exe' -WorkingDirectory $PWD.Path -ArgumentList '--self-test --gui-smoke --smoke-browser --report frozen-smoke.json' -Wait -PassThru
+          if ($app.ExitCode -ne 0) { Get-Content frozen-smoke.json; throw 'Frozen app smoke test failed' }
+          $result = Get-Content frozen-smoke.json -Raw | ConvertFrom-Json
+          if ($result.status -ne 'passed' -or -not $result.chromium_cdp) { throw 'Missing smoke-test evidence' }
+      - name: Record Windows build evidence
+        run: python scripts/write_build_info.py
+      - name: Package portable download
+        shell: pwsh
+        run: |
+          Copy-Item README.md,LICENSE,QUICK_START.md,THIRD_PARTY_NOTICES.md,build-info.json -Destination dist
+          Compress-Archive -Path dist\* -DestinationPath ApplyLocal-Windows-x64.zip
+          (Get-FileHash ApplyLocal-Windows-x64.zip -Algorithm SHA256).Hash | Out-File ApplyLocal-Windows-x64.zip.sha256 -Encoding ascii
+          Compress-Archive -Path test-results.xml,source-smoke.json,frozen-smoke.json,build-info.json -DestinationPath ApplyLocal-test-evidence.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ApplyLocal-Windows-x64
+          path: |
+            ApplyLocal-Windows-x64.zip
+            ApplyLocal-Windows-x64.zip.sha256
+            ApplyLocal-test-evidence.zip
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-evidence
+          path: |
+            test-results.xml
+            source-smoke.json
+            frozen-smoke.json
+            build-info.json
+
+  release:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ApplyLocal-Windows-x64
+          path: release
+      - name: Prepare executable, notices and source download
+        run: |
+          git archive --format=zip --prefix=ApplyLocal/ -o release/ApplyLocal-source.zip HEAD
+          unzip -q release/ApplyLocal-Windows-x64.zip -d unpacked
+          cp unpacked/ApplyLocal.exe release/ApplyLocal.exe
+          cp LICENSE THIRD_PARTY_NOTICES.md release/
+          cd unpacked
+          zip -q -r ../release/ApplyLocal-licenses.zip licenses LICENSE THIRD_PARTY_NOTICES.md
+          cd ../release
+          sha256sum ApplyLocal.exe > ApplyLocal.exe.sha256
+      - name: Publish downloadable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_SHA: ${{ github.sha }}
+          BUILD_REF_TYPE: ${{ github.ref_type }}
+          BUILD_REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$BUILD_REF_TYPE" = 'tag' ]; then
+            release_tag="$BUILD_REF_NAME"
+            release_flags=()
+          else
+            release_tag="windows-${BUILD_SHA:0:12}"
+            release_flags=(--prerelease)
+          fi
+          gh release create "$release_tag" release/* --target "$BUILD_SHA" --title "ApplyLocal Windows ${BUILD_SHA:0:7}" --notes-file docs/RELEASE_NOTES.md "${release_flags[@]}"
