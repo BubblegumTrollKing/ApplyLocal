@@ -15,7 +15,8 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 from .domain import (Answer, AssistanceRequired, Button, NavigationUnconfirmed, Option,
                      Question, RecheckRequired, Snapshot, check_stop, validate_answer)
-from .local_ai import loopback_url
+from .domain import digest
+from .browser_choice import local_browser_endpoint
 from .policy import page_restriction
 
 
@@ -83,15 +84,16 @@ class BrowserSession:
         self._targets = {}
         self._navigation_watch = None
         self._request_listener = None
+        self._navigation_attempts = {}
 
     def connect(self, endpoint: str) -> None:
         check_stop(self.stop)
         self.playwright = sync_playwright().start()
         try:
-            self.browser = self.playwright.chromium.connect_over_cdp(loopback_url(endpoint), timeout=5000)
+            self.browser = self.playwright.chromium.connect_over_cdp(local_browser_endpoint(endpoint), timeout=30000)
         except Exception:
             self.close()
-            raise AssistanceRequired("Cannot connect to the browser. Use Open browser, then Refresh tabs.")
+            raise AssistanceRequired("Cannot connect. For an existing browser, enable remote debugging and allow its connection prompt; otherwise use Open browser.")
 
     def close(self) -> None:
         self._end_navigation_watch()
@@ -173,7 +175,8 @@ class BrowserSession:
                 options = tuple(Option(target(o["id"]), o["label"], o["selected"], o["disabled"])
                                 for o in q["options"])
                 questions.append(Question(target(q["id"]), q["prompt"], q["kind"], options,
-                                          q["value"], q["required"], q["sensitive"], q.get("context", "")))
+                                          q["value"], q["required"], q["sensitive"], q.get("context", ""),
+                                          q.get("invalid", False)))
             buttons.extend(Button(target(b["id"]), b["label"], b["disabled"], b["submit"])
                            for b in raw["buttons"])
             errors.extend(raw["errors"])
@@ -261,10 +264,16 @@ class BrowserSession:
         latest = self.snapshot()
         if latest.blocked or latest.structure != expected.structure or latest.questions != expected.questions:
             raise RecheckRequired("The page changed before navigation; rechecking automatically.")
-        if latest.errors:
-            raise AssistanceRequired("The page reports validation errors. Correct them in the browser.")
+        if any(q.invalid for q in latest.questions):
+            raise RecheckRequired("Rechecking the form's current invalid fields before navigation.")
         if button.disabled or latest.busy:
             raise RecheckRequired("Waiting for the page's navigation control to become ready.")
+        attempt_key = digest([latest.content_signature, button.label,
+                              [(q.value, [o.label for o in q.options if o.selected]) for q in latest.questions]])
+        attempts = self._navigation_attempts.get(attempt_key, 0)
+        if attempts >= 2:
+            raise RecheckRequired("Watching the current page before sending another navigation action.")
+        self._navigation_attempts[attempt_key] = attempts + 1
         self._begin_navigation_watch(latest, button)
         check_stop(self.stop)
         try:
@@ -273,8 +282,6 @@ class BrowserSession:
             raise NavigationUnconfirmed("Navigation needs an automatic recheck after an interrupted click.") from exc
         after = self.recheck_navigation(timeout=timeout, allow_retry=False)
         if after is not None:
-            if after.errors:
-                raise AssistanceRequired("The page reports validation errors after navigation.")
             return after
         raise NavigationUnconfirmed("Navigation was not confirmed; rechecking automatically.")
 
@@ -317,9 +324,13 @@ class BrowserSession:
             check_stop(self.stop)
             try:
                 after = self.snapshot()
-                if after.blocked or after.errors or after.complete:
+                if after.blocked or after.complete:
                     self._end_navigation_watch()
                     return after
+                if (not watch.network_seen and any(q.invalid for q in after.questions)
+                        and after.content_signature == watch.before.content_signature):
+                    self._end_navigation_watch()
+                    return after  # Repair this form from a fresh snapshot, not a manual dialog.
                 transitioned = after.content_signature != watch.before.content_signature
                 if (FINAL.fullmatch(watch.button.label.strip())
                         and after.question_content_signature == watch.before.question_content_signature):
@@ -355,7 +366,7 @@ class BrowserSession:
 
     def navigate_visual_click(self, expected: Snapshot, button: Button) -> None:
         latest = self.snapshot()
-        if latest.blocked or latest.errors or latest.structure != expected.structure:
+        if latest.blocked or latest.structure != expected.structure:
             raise RecheckRequired("The page changed before visual navigation; rechecking automatically.")
         if button.disabled or latest.busy:
             raise RecheckRequired("Waiting for the visual page's navigation control to become ready.")

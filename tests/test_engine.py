@@ -68,7 +68,7 @@ def test_human_only_never_calls_model_or_clicks(browser):
     def ask(request):
         browser.stop.set()
         return UserReply()
-    assert run_engine(browser, ask=ask, ai=ai)[0] == "stopped"
+    assert run_engine(browser, ask=ask, ai=ai)[0] == "human_only"
     assert ai.calls == 0
     assert browser.page.evaluate("!!window.clicked") is False
 
@@ -82,21 +82,22 @@ def test_attestation_requires_manual_even_with_saved_answer(browser):
     def ask(request):
         assert request["question"] is None
         browser.stop.set()
-    assert run_engine(browser, profile, ask)[0] == "stopped"
+    timer = threading.Timer(0.3, browser.stop.set)
+    timer.start()
+    try:
+        assert run_engine(browser, profile, ask)[0] == "stopped"
+    finally:
+        timer.join()
     assert not browser.page.locator('input').is_checked()
 
 
 @pytest.mark.browser
-def test_model_failure_pauses_without_click(browser):
-    browser.page.set_content('<fieldset><legend>Which action is safest?</legend><label><input type=radio name=q>Secure the area</label><label><input type=radio name=q>Ignore it</label></fieldset>')
+def test_model_failure_uses_best_effort_choice_without_asking(browser):
+    browser.page.set_content('<fieldset><legend>Which action is safest?</legend><label><input type=radio name=q>Secure the area</label><label><input type=radio name=q>Ignore it</label></fieldset><button onclick="document.body.innerHTML=\'<h1>Assessment complete</h1>\'">Submit</button>')
     class BrokenAI:
         def decide(self, *args, **kwargs):
             raise AssistanceRequired("Model unavailable")
-    def ask(request):
-        assert "unavailable" in request["message"]
-        browser.stop.set()
-    assert run_engine(browser, ask=ask, ai=BrokenAI())[0] == "stopped"
-    assert browser.page.locator('input:checked').count() == 0
+    assert run_engine(browser, ai=BrokenAI())[0] == "complete"
 
 
 def test_uncertain_navigation_is_rechecked_without_user_input():

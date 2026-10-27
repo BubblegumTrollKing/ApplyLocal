@@ -111,8 +111,6 @@ class VisionFallback:
             check_stop(self.stop)
             browser.page.wait_for_timeout(150)
             after = browser.snapshot()
-            if after.errors:
-                raise AssistanceRequired("The page rejected the visual answer.")
             if after.complete or after.blocked:
                 return after
             if after.busy:

@@ -23,6 +23,10 @@ class NavigationUnconfirmed(AssistanceRequired):
     """A navigation attempt needs observation, not another unconditional click."""
 
 
+class PersonalFactRequired(AssistanceRequired):
+    """An unknown concrete applicant fact; never replace it with a guess."""
+
+
 def check_stop(stop: threading.Event) -> None:
     if stop.is_set():
         raise Stopped()
@@ -54,6 +58,7 @@ class Question:
     required: bool = False
     sensitive: bool = False
     context: str = ""
+    invalid: bool = False
 
     @property
     def signature(self) -> str:

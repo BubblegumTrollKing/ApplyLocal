@@ -85,7 +85,7 @@ def test_stop_interrupts_automatic_navigation_rechecking(browser):
         timer.join()
 
 
-def test_unresolved_navigation_stops_after_bounded_observation():
+def test_unresolved_navigation_keeps_observing_until_stopped():
     snap = Snapshot("http://test", "", "", [], [Button("b", "Next")])
     class Browser:
         stop = threading.Event()
@@ -95,13 +95,17 @@ def test_unresolved_navigation_stops_after_bounded_observation():
             return snapshot.buttons[0], False
         def navigate(self, *args):
             raise NavigationUnconfirmed()
+        rechecks = 0
         def recheck_navigation(self, **kwargs):
+            self.rechecks += 1
+            if self.rechecks == 3:
+                self.stop.set()
             return None
     browser = Browser()
     engine = Engine(browser, None, Settings(), Profile(), browser.stop, lambda e: None,
                     lambda r: pytest.fail("Recovery must not require a recheck button"))
-    engine.navigation_recovery_seconds = 0
-    assert engine.run() == "stalled"
+    assert engine.run() == "stopped"
+    assert browser.rechecks == 3
 
 
 def test_submit_status_heading_does_not_unlock_a_second_submission(browser):

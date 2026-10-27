@@ -29,7 +29,7 @@
       || text(container.querySelector('legend,[data-prompt],.question-text,h1,h2,h3,h4'))))
     || label(el) || 'Unlabeled question');
   const globalProse = clean(all('p,[data-context],.scenario-text,[data-scenario],.instructions')
-    .filter(el => visible(el) && !el.closest('label,[role="option"],[role="timer"],.timer,.countdown')
+    .filter(el => visible(el) && !el.closest('label,[role="option"],[role="timer"],.timer,.countdown,[role="alert"],.error,.validation-error,[aria-live]')
       && !group(el))
     .map(text).join(' '));
   const context = el => {
@@ -37,11 +37,13 @@
     const area = container?.closest('[data-scenario],.scenario,.question-container') || container;
     if (!area) return globalProse;
     return clean(Array.from(area.querySelectorAll('p,[data-context],.scenario-text'))
-      .filter(visible).map(text).join(' ')) || globalProse;
+      .filter(el => visible(el) && !el.closest('[role="alert"],.error,.validation-error,[aria-live]')).map(text).join(' ')) || globalProse;
   };
   const disabled = el => el.disabled || el.getAttribute('aria-disabled') === 'true';
   const checked = el => el.checked === true || el.getAttribute('aria-checked') === 'true'
     || el.getAttribute('aria-selected') === 'true';
+  const invalid = el => !!(el.willValidate && !el.validity.valid)
+    || (!el.willValidate && el.getAttribute('aria-invalid') === 'true');
   const questions = [], used = new Set();
   const controls = all('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]),textarea,select,[role="radio"],[role="checkbox"],[role="combobox"]')
     .filter(visible);
@@ -61,34 +63,39 @@
       questions.push({id: id(el), prompt: prompt(el, container), context: context(el), kind: type,
         options: peers.map(p => ({id: id(p), label: label(p) || p.value || 'Unlabeled option',
           selected: checked(p), disabled: disabled(p)})), value: '',
-        required: peers.some(p => p.required || p.getAttribute('aria-required') === 'true'), sensitive: false});
+        required: peers.some(p => p.required || p.getAttribute('aria-required') === 'true'),
+        invalid: peers.some(p => p.willValidate && !p.validity.valid)
+          || (!peers.some(checked) && peers.some(p => p.getAttribute('aria-invalid') === 'true')),
+        sensitive: false});
     } else if (el.tagName === 'SELECT') {
       used.add(el);
       questions.push({id: id(el), prompt: prompt(el, null), context: context(el), kind: el.multiple ? 'checkbox' : 'select',
         options: Array.from(el.options).filter(o => o.value !== '').map(o => ({id: id(o),
           label: text(o), selected: o.selected, disabled: disabled(o) || disabled(o.parentElement)})),
-        value: '', required: el.required, sensitive: false});
+        value: '', required: el.required, invalid: invalid(el), sensitive: false});
     } else if (role === 'combobox') {
       used.add(el);
       const list = byId(el, el.getAttribute('aria-controls') || el.getAttribute('aria-owns') || '');
       const options = list ? Array.from(list.querySelectorAll('[role="option"]')) : [];
       questions.push({id: id(el), prompt: label(el), context: context(el), kind: 'combobox', value: '',
         options: options.map(o => ({id: id(o), label: text(o), selected: checked(o), disabled: disabled(o)})),
-        required: el.getAttribute('aria-required') === 'true', sensitive: false});
+        required: el.getAttribute('aria-required') === 'true',
+        invalid: invalid(el) && !options.some(checked), sensitive: false});
     } else {
       used.add(el);
       questions.push({id: id(el), prompt: prompt(el, null), context: context(el), kind: 'text', options: [],
         value: el.value || '', required: !!el.required,
+        invalid: invalid(el),
         sensitive: ['password','file'].includes(type) || el.autocomplete === 'one-time-code'});
     }
   }
   const buttons = all('button,input[type="submit"],input[type="button"],[role="button"],a')
     .filter(visible).map(el => ({id: id(el), label: label(el) || text(el) || el.value || '',
       disabled: !!disabled(el), submit: el.type === 'submit'}));
-  const errors = all('[role="alert"],[aria-invalid="true"],.error,.validation-error')
-    .filter(visible).map(el => text(el) || 'Invalid field');
-  const invalid = controls.filter(el => el.willValidate && !el.validity.valid && (el.value || el.matches(':user-invalid')));
-  invalid.forEach(el => errors.push(el.validationMessage || 'Invalid field'));
+  const errors = all('[role="alert"],.error,.validation-error')
+    .filter(visible).map(text).filter(Boolean);
+  controls.filter(el => invalid(el) && (el.value || el.matches(':user-invalid')))
+    .forEach(el => errors.push(el.validationMessage || 'Invalid field'));
   const visibleText = clean([document.body?.innerText, ...roots.slice(1).flatMap(root =>
     Array.from(root.children).filter(visible).map(text))].join(' ')).slice(0, 120000);
   const frames = all('iframe').filter(visible);

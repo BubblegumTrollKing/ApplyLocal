@@ -63,13 +63,13 @@ def test_personal_handoff_sends_only_selected_option(app):
     assert app.request is None
 
 
-def test_manual_only_handoff_has_no_answer_input(app):
+def test_manual_only_status_has_no_recheck_button(app):
     from tkinter import ttk
     app.show_request({"message": "Complete identity verification manually.", "question": None, "submit": False})
     assert len(app.answer_frame.winfo_children()) == 1
     button = app.answer_frame.winfo_children()[0]
-    assert isinstance(button, ttk.Button)
-    assert "recheck" in button["text"]
+    assert isinstance(button, ttk.Label)
+    assert "automatically" in button["text"]
 
 
 def test_final_review_requires_explicit_submit_button(app):
@@ -113,3 +113,40 @@ def test_gui_worker_fills_and_submits_over_real_cdp(app, chromium):
     finally:
         app.stop_event.set()
         owner.close()
+
+
+def test_fact_prompt_poll_does_not_rebuild_widgets_or_require_recheck_button(app):
+    import queue
+    import threading
+    import time
+    from applylocal.engine import UserReply
+    app.messages = queue.Queue()
+    app.replies = queue.Queue()
+    app._worker_request_id = None
+    q = Question('q', 'Email address', 'text')
+    request = {'message': 'An actual email is needed', 'question': q, 'submit': False,
+               'request_id': q.signature, 'poll_seconds': 0.08}
+    def call():
+        assert app.ask(request) is None
+        assert app.ask(request) is None
+    thread = threading.Thread(target=call)
+    thread.start()
+    while thread.is_alive():
+        app.update()
+        time.sleep(0.01)
+    thread.join()
+    assert app.request['request_id'] == q.signature
+    app.reply(UserReply())
+    assert app.replies.get_nowait().request_id == q.signature
+
+
+def test_gui_exposes_browser_selection_and_existing_session_mode(app):
+    assert 'Google Chrome' in app.browser_picker['values']
+    app.browser_name.set('Google Chrome')
+    app.connection_mode.set('existing')
+    app.persist_settings()
+    assert app.settings.browser_name == 'Google Chrome'
+    assert app.settings.connection_mode == 'existing'
+    app.connection_mode.set('companion')
+    app.browser_name.set('Automatic')
+    app.persist_settings()

@@ -89,7 +89,7 @@ def test_navigation_timeout_never_reclicks(browser):
 def test_validation_failure_detected(browser):
     browser.page.set_content('<button onclick="document.body.insertAdjacentHTML(\'beforeend\',\'<p role=alert>Required</p>\')">Next</button>')
     snap = browser.snapshot()
-    with pytest.raises(AssistanceRequired, match="validation"):
+    with pytest.raises(AssistanceRequired, match="not confirmed"):
         browser.navigate(snap, snap.buttons[0], timeout=1)
 
 

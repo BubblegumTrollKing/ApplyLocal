@@ -32,6 +32,7 @@ TOPICS = [
 
 def concept_sequence(text: str) -> tuple[str, ...]:
     value = normalize(text).replace("’", "'")
+    value = re.sub(r"^(?:question|item)\s*\d+\s*(?:of\s*\d+|/\s*\d+)?\s*[:.]?\s*", "", value)
     value = re.sub(r"\b(?:work(?:ing)? (?:as part of a|in a|with a|with my) team|"
                    r"work(?:ing)? with others|collaborat\w*|cooperat\w*|teamwork)\b", "teamwork", value)
     value = re.sub(r"\bon time\b", "ontime", value)

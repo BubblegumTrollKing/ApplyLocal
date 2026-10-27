@@ -40,11 +40,18 @@ class Settings:
     confidence: float = 0.90
     max_pages: int = 150
     automation_version: int = 2
+    browser_name: str = "Automatic"
+    browser_executable: str = ""
+    browser_profile: str = ""
+    connection_mode: str = "companion"
 
     def __post_init__(self):
-        for key in ("endpoint", "ollama", "text_model", "vision_model"):
+        for key in ("endpoint", "ollama", "text_model", "vision_model", "browser_name",
+                    "browser_executable", "browser_profile", "connection_mode"):
             if not isinstance(getattr(self, key), str):
                 raise ValueError("Local addresses and model names must be text")
+        if self.connection_mode not in {"companion", "existing"}:
+            raise ValueError("Choose an existing or companion browser connection")
         if type(self.vision) is not bool or type(self.auto_submit) is not bool:
             raise ValueError("Invalid checkbox setting")
         if not isinstance(self.confidence, (int, float)) or not 0 < self.confidence <= 1:

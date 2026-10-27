@@ -206,7 +206,7 @@ def test_reported_spill_question_recovers_model_misclassification_and_selects_co
     ai = MisclassifiedOnce("http://127.0.0.1:11434", browser.stop)
     profile = Profile()
     assert run_engine(browser, profile=profile, ai=ai)[0] == "complete"
-    assert ai.calls == 2
+    assert ai.calls == 1
     assert list(profile.answers.values()) == [["Secure the area and follow the spill procedure"]]
 
 

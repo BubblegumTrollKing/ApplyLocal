@@ -29,7 +29,7 @@ def fake_ollama():
                     value["remote_host"] = "https://remote.invalid"
             else:
                 time.sleep(state["delay"])
-                value = {"message": {"content": "not JSON" if state["invalid"] else json.dumps(state["reply"])}}
+                value = {"message": {"content": "not JSON" if state["invalid"] else json.dumps(state["reply"](request) if callable(state["reply"]) else state["reply"])}}
             body = json.dumps(value).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -65,18 +65,21 @@ def test_real_http_request_and_schema(fake_ollama):
 
 
 @pytest.mark.parametrize("update", [{"option_ids": ["invented"]}, {"kind": "personal"}, {"kind": "human_only"}, {"option_ids": ["a", "b"]}, {"unexpected": True}])
-def test_model_failures_fail_closed(fake_ollama, update):
+def test_bad_model_metadata_or_ids_still_choose_an_enabled_option(fake_ollama, update):
     url, state = fake_ollama
     state["reply"].update(update)
-    with pytest.raises(AssistanceRequired):
-        LocalAI(url, threading.Event()).decide("test:local", q(), 0.9)
+    result = LocalAI(url, threading.Event()).decide("test:local", q(), 0.9)
+    assert len(result.option_ids) == 1
+    assert result.option_ids[0] in {"a", "b"}
+    assert result.value is None
 
 
 def test_malformed_model_json(fake_ollama):
     url, state = fake_ollama
     state["invalid"] = True
-    with pytest.raises(AssistanceRequired, match="invalid structured"):
-        LocalAI(url, threading.Event()).decide("test:local", q(), 0.9)
+    answer = LocalAI(url, threading.Event()).decide("test:local", q(), 0.9)
+    assert answer.option_ids == ("a",)
+    assert answer.source == "fallback"
 
 
 def test_cloud_model_metadata_rejected(fake_ollama):
@@ -124,14 +127,13 @@ def test_subjective_personality_is_answered_automatically(fake_ollama):
     assert len([r for r in state["requests"] if r[0] == "/api/chat"]) == 1
 
 
-def test_uncertainty_gets_automatic_review_then_best_supported_choice(fake_ollama):
+def test_uncertainty_does_not_add_another_model_call(fake_ollama):
     url, state = fake_ollama
     state["reply"]["confidence"] = 0.55
     ai = LocalAI(url, threading.Event())
     assert ai.decide("test:local", q(), 0.9).option_ids == ("a",)
     chats = [r[1] for r in state["requests"] if r[0] == "/api/chat"]
-    assert len(chats) == 2
-    assert "Review the question" in chats[1]["messages"][0]["content"]
+    assert len(chats) == 1
 
 
 def test_misclassified_spill_question_is_reconsidered_without_user(fake_ollama, monkeypatch):
@@ -152,7 +154,7 @@ def test_relevant_answer_history_is_sent_in_same_call(fake_ollama):
     chats = [r[1] for r in state["requests"] if r[0] == "/api/chat"]
     assert len(chats) == 1
     assert json.loads(chats[0]["messages"][1]["content"])["answer_history"] == history
-    assert chats[0]["options"]["num_predict"] == 512
+    assert chats[0]["options"]["num_predict"] == 128
 
 
 def test_factual_unknown_never_sent_to_model(fake_ollama):
@@ -161,3 +163,23 @@ def test_factual_unknown_never_sent_to_model(fake_ollama):
     with pytest.raises(AssistanceRequired, match="actual personal fact"):
         LocalAI(url, threading.Event()).decide("test:local", item, 0.9)
     assert state["requests"] == []
+
+
+@pytest.mark.parametrize('prompt', ['Are you available weekends?', 'Verify your identity',
+                                   'I certify these answers are true', 'Do not use AI tools'])
+def test_best_effort_never_overrides_actual_fact_or_restricted_step(fake_ollama, prompt):
+    url, state = fake_ollama
+    item = Question('q', prompt, 'radio', (Option('a', 'Yes'), Option('b', 'No')))
+    with pytest.raises(AssistanceRequired):
+        LocalAI(url, threading.Event()).decide('test:local', item, 0.9)
+    assert state['requests'] == []
+
+
+def test_real_http_non_null_value_and_label_format_are_repaired_in_one_call(fake_ollama):
+    url, state = fake_ollama
+    state['reply'].update(option_ids=['Report'], value='Report', confidence=0)
+    answer = LocalAI(url, threading.Event()).decide('test:local', q(), 0.99)
+    assert answer.option_ids == ('a',)
+    assert answer.value is None
+    assert answer.source == 'model'
+    assert len([r for r in state['requests'] if r[0] == '/api/chat']) == 1
