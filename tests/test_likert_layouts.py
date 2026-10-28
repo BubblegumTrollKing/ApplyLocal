@@ -47,3 +47,14 @@ def test_numeric_accessible_suffixes_do_not_hide_an_explicit_visual_scale(browse
     question=browser.snapshot().questions[0]
     assert question.options[-1].label=='Strongly disagree'
     assert workstyle_answer(question).option_ids==(question.options[-1].id,)
+
+
+def test_nested_generic_radiogroup_keeps_the_actual_statement_not_choices_caption(browser):
+    numeric_scale(browser)
+    browser.page.locator('.scale').evaluate("el=>{el.setAttribute('role','radiogroup');el.setAttribute('aria-label','Response choices')}")
+    question=browser.snapshot().questions[0]
+    assert question.prompt=='You struggle with deadlines.'
+    # The endpoint labels are inside the radiogroup, and the statement is outside.
+    assert question.options[-1].label=='Strongly disagree'
+    assert run_engine(browser)[0]=='complete'
+    assert browser.page.evaluate('window.selected')==6

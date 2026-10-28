@@ -24,17 +24,25 @@
     || Array.from(el.labels || []).map(text).join(' ') || text(el.closest('label'))
     || el.getAttribute('placeholder') || (el.matches('[role]') ? text(el) : '') || el.title);
   const group = el => el.closest('fieldset,[role="radiogroup"],[data-question],.question,[role="group"]');
-  const prompt = (el, container) => clean(
-    (container && (labelled(container) || container.getAttribute('aria-label')
-      || text(container.querySelector('legend,[data-prompt],.question-text,.statement,.question-title,.input__label,[role="heading"],h1,h2,h3,h4'))))
-    || label(el) || 'Unlabeled question');
+  const headings = 'legend,[data-prompt],.question-text,.statement,.question-title,.input__label,[role="heading"],h1,h2,h3,h4';
+  const prompt = (el, container) => {
+    let caption = container && (labelled(container) || container.getAttribute('aria-label')
+      || text(container.querySelector(headings)));
+    if (!caption || /^(?:answer|answers|choices|options|response|responses|rating|answer choices|response choices|rate your answer|agree disagree|disagree agree)$/i.test(clean(caption))) {
+      const outer = container?.parentElement?.closest('[data-question],.question,fieldset');
+      caption = (outer && (labelled(outer) || outer.getAttribute('aria-label')
+        || text(outer.querySelector(headings)))) || caption;
+    }
+    return clean(caption || label(el) || 'Unlabeled question');
+  };
   const globalProse = clean(all('p,[data-context],.scenario-text,[data-scenario],.instructions')
     .filter(el => visible(el) && !el.closest('label,[role="option"],[role="timer"],.timer,.countdown,[role="alert"],.error,.validation-error,[aria-live]')
       && !group(el))
     .map(text).join(' '));
   const context = el => {
     const container = group(el);
-    const area = container?.closest('[data-scenario],.scenario,.question-container') || container;
+    const area = container?.closest('[data-scenario],.scenario,.question-container')
+      || container?.closest('[data-question],.question') || container;
     if (!area) return globalProse;
     return clean(Array.from(area.querySelectorAll('p,[data-context],.scenario-text'))
       .filter(el => visible(el) && !el.closest('[role="alert"],.error,.validation-error,[aria-live]')).map(text).join(' ')) || globalProse;
