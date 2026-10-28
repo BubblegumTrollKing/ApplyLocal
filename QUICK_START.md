@@ -10,11 +10,13 @@
 6. Click **Try practice questionnaire**. Select its tab and click **Start selected questionnaire**. The practice stays on your computer.
 7. For real use, open the employment questionnaire in that same browser. Click **Refresh tabs**, choose its tab, and **Start selected questionnaire**.
 
-The agent automatically chooses employer-oriented responses for general knowledge, workplace situations, personality, work-style and Likert questions. Verified answers are remembered automatically and reused for paraphrases and related questions. There is no remember checkbox. Automatic submission is enabled by default; clear its checkbox if you prefer a final review.
+The agent automatically chooses employer-oriented responses for general knowledge, workplace situations, personality, work-style and Likert questions. Clear work-style statements answer immediately without waiting for AI; unfamiliar questions on the same page share a model call. Positive and negative wording are evaluated separately. Verified answers are remembered automatically and reused for paraphrases and related questions. There is no remember checkbox. Automatic submission is enabled by default; clear its checkbox if you prefer a final review.
 
 Only an unknown concrete fact or commitment needs your answer, such as an email address, qualification or actual availability. Choose it once and use **Use this answer and continue**; it is saved automatically. Entering contact details in **Your facts & saved answers** avoids those prompts.
 
 For sign-in, CAPTCHA, identity verification, signatures, consent and explicitly human-only assessments, work directly in the browser. The app detects browser changes automatically; there is no recheck button. If the whole assessment requires human-only work, complete the whole assessment yourself and stop the agent.
+
+**The window scrolls with the mouse wheel or its right-hand scrollbar.** Start and Stop remain visible at the bottom. Page Up/Down and Home/End also work outside text fields.
 
 **STOP or Esc (with ApplyLocal focused) stops new actions.** A click already sent may finish. Leave the selected tab untouched while the agent runs. The browser remains open when the agent disconnects.
 
@@ -40,4 +42,6 @@ For a ready-to-run executable, use the Windows download in the repository's Rele
 
 Your saved facts are readable files in your Windows user folder. **Open local data & logs** shows them. Do not share that folder or your companion browser profile with others.
 
-If the model gives an unusable choice or none is ideal, the app chooses an enabled best-effort option automatically. A closed-choice decision uses one compact model call with an eight-second budget; no review prompt is opened for low confidence or bad answer formatting. Real missing facts are not invented.
+If the model gives an unusable choice or none is ideal, the app chooses an enabled best-effort option automatically. An unfamiliar closed-choice batch uses one compact model call with an eight-second budget; no review prompt is opened for low confidence or bad answer formatting. Real missing facts are not invented.
+
+Upgrading resets old automatic agreement-scale predictions so a bad previous answer is not repeated from memory. Concrete facts and explicitly identified user answers are kept; an original local profile backup is saved automatically. Visible work-style answers that clearly contradict the requested professional profile are corrected when the agent reads them.

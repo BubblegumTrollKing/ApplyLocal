@@ -52,14 +52,19 @@ def agreement_level(text: str) -> int | None:
 
 
 def fallback_answer(q: Question, preferred_ids=()) -> Answer:
+    from .workstyle import agreement_scale, workstyle_answer
+    recognized = workstyle_answer(q)
+    if recognized and (not preferred_ids or recognized.option_ids[0] in preferred_ids):
+        return recognized
     options = [o for o in q.options if not o.disabled
                and (not preferred_ids or o.id in preferred_ids)]
     if not options:
         raise AssistanceRequired("Waiting for an enabled choice to become available.")
-    levels = [agreement_level(o.label) for o in options]
-    if all(level is not None for level in levels):
-        target = -2 if professional_score(q.prompt) < 0 else 2
-        chosen = min(zip(options, levels), key=lambda pair: abs(pair[1] - target))[0]
+    scale = agreement_scale(q)
+    if scale is not None:
+        # An unrecognized statement has no justified positive direction. A
+        # neutral fallback is preferable to repeating agreement on negative items.
+        chosen = min(options, key=lambda option: abs(scale[option.id]))
     else:
         chosen = max(options, key=lambda option: professional_score(option.label))
     answer = Answer((chosen.id,), source="fallback")

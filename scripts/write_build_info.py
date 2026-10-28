@@ -25,6 +25,9 @@ if source.get("status") != "passed" or not source.get("gui_window"):
     raise SystemExit("Source GUI test evidence is missing")
 if frozen.get("status") != "passed" or not frozen.get("gui_window") or not frozen.get("chromium_cdp"):
     raise SystemExit("Frozen GUI/browser evidence is missing")
+if not all(report.get('workstyle_polarity') and report.get('window_scroll')
+           and report.get('stop_button_visible') for report in (source, frozen)):
+    raise SystemExit('Work-style polarity or whole-window scrolling evidence is missing')
 
 executable = Path("dist/ApplyLocal.exe")
 binary = executable.read_bytes()

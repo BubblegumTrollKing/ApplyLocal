@@ -150,3 +150,92 @@ def test_gui_exposes_browser_selection_and_existing_session_mode(app):
     app.connection_mode.set('companion')
     app.browser_name.set('Automatic')
     app.persist_settings()
+
+
+def test_entire_window_scrolls_at_small_size_and_stop_stays_visible(app):
+    from types import SimpleNamespace
+    app.geometry('660x440')
+    app.update()
+    canvas = app.scroll_host.canvas
+    canvas.yview_moveto(0)
+    app.update()
+    assert canvas.yview()[1] < 1
+    app.scroll_host._wheel(SimpleNamespace(widget=app.scroll_host.content, delta=-1200, num=None))
+    app.update()
+    assert canvas.yview()[0] > 0
+    canvas.yview_moveto(1)
+    app.update()
+    assert canvas.yview()[1] >= 0.99
+    top = app.scroll_host.winfo_rooty()
+    bottom = top + app.scroll_host.winfo_height()
+    assert top <= app.data_button.winfo_rooty() < bottom
+    assert app.stop_button.winfo_ismapped()
+    assert app.stop_button.winfo_rooty() + app.stop_button.winfo_height() <= app.winfo_rooty()+app.winfo_height()
+    assert app.start_button.winfo_ismapped()
+    app.scroll_host._edge(SimpleNamespace(widget=app), 0)
+    app.geometry('1000x800')
+    app.update()
+
+
+def test_large_text_and_long_fact_question_remain_scrollable(app):
+    import tkinter.font as tkfont
+    default = tkfont.nametofont('TkDefaultFont')
+    original = default.cget('size')
+    try:
+        default.configure(size=16)
+        app.geometry('700x480')
+        question = Question('q', 'A long required factual question. '*12, 'text')
+        app.show_request({'message':'A real fact is needed', 'question':question, 'submit':False})
+        app.update()
+        canvas = app.scroll_host.canvas
+        canvas.yview_moveto(1)
+        app.update()
+        assert canvas.yview()[1] >= 0.99
+        assert app.stop_button.winfo_ismapped()
+        assert app.stop_button.winfo_rooty()+app.stop_button.winfo_height() <= app.winfo_rooty()+app.winfo_height()
+    finally:
+        default.configure(size=original)
+        app.geometry('1000x800')
+        app.update()
+
+
+def test_wheel_over_empty_log_scrolls_the_window(app):
+    from types import SimpleNamespace
+    app.geometry('660x440')
+    app.log.configure(state='normal')
+    app.log.delete('1.0','end')
+    app.log.configure(state='disabled')
+    app.update()
+    canvas=app.scroll_host.canvas
+    canvas.yview_moveto(0)
+    app.scroll_host._wheel(SimpleNamespace(widget=app.log,delta=-120,num=None))
+    app.update()
+    assert canvas.yview()[0]>0
+    canvas.yview_moveto(0)
+    app.geometry('1000x800')
+    app.update()
+
+
+@pytest.mark.parametrize('opener',['edit_profile','advanced'])
+def test_profile_and_settings_dialogs_scroll_with_save_always_reachable(app,opener):
+    import tkinter as tk
+    from tkinter import ttk
+    getattr(app,opener)()
+    dialog=next(w for w in app.winfo_children() if isinstance(w,tk.Toplevel))
+    try:
+        dialog.geometry('520x340')
+        app.update()
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+        save=next(w for w in descendants(dialog) if isinstance(w,ttk.Button) and w['text']=='Save')
+        assert save.winfo_rooty()+save.winfo_height()<=dialog.winfo_rooty()+dialog.winfo_height()
+        canvas=dialog.scroll_host.canvas
+        canvas.yview_moveto(1)
+        app.update()
+        assert canvas.yview()[1]>=0.99
+    finally:
+        dialog.destroy()
+        app.update()
+    assert len(app._applylocal_scroll_surfaces)==1

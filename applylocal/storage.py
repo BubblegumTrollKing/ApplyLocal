@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+import copy
 import json
 import os
 import re
 from pathlib import Path
 import tempfile
 
-from .domain import Answer, AssistanceRequired, Question, normalize, validate_answer
+from .domain import Answer, AssistanceRequired, Option, Question, normalize, validate_answer
 
 
 def data_directory() -> Path:
@@ -92,6 +93,8 @@ class Profile:
     facts: dict[str, str] = field(default_factory=dict)
     # Answers are keyed by exact normalized question AND available options.
     answers: dict[str, list[str]] = field(default_factory=dict)
+    answer_sources: dict[str, str] = field(default_factory=dict)
+    decision_version: int = 3
 
     @classmethod
     def load(cls, path: Path) -> Profile:
@@ -101,12 +104,41 @@ class Profile:
         if not isinstance(raw, dict) or not all(isinstance(raw.get(k, {}), dict)
                                               for k in ("facts", "answers")):
             raise ValueError("Invalid profile file")
-        profile = cls(raw.get("facts", {}), raw.get("answers", {}))
+        profile = cls(copy.deepcopy(raw.get("facts", {})), copy.deepcopy(raw.get("answers", {})),
+                      copy.deepcopy(raw.get("answer_sources", {})))
         if not all(isinstance(k, str) and isinstance(v, str) for k, v in profile.facts.items()):
             raise ValueError("Profile facts must be text")
         if not all(isinstance(k, str) and isinstance(v, list)
                    and all(isinstance(s, str) for s in v) for k, v in profile.answers.items()):
             raise ValueError("Saved answers must be lists of text")
+        if not isinstance(profile.answer_sources, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in profile.answer_sources.items()):
+            raise ValueError("Answer sources must be text")
+        version = raw.get("decision_version", 0)
+        if type(version) is not int:
+            raise ValueError("Invalid answer decision version")
+        removed_legacy = False
+        if version < 3:
+            from .workstyle import agreement_scale
+            from .policy import requires_personal_answer
+            # Old automatic Likert answers can all reflect the former blanket
+            # agreement fallback. Keep concrete facts and explicit user answers.
+            for key in list(profile.answers):
+                try:
+                    prompt, kind, labels, context = json.loads(key)
+                    q = Question("legacy", prompt, kind,
+                                 tuple(Option(str(i), label) for i, label in enumerate(labels)), context=context)
+                    if (agreement_scale(q) is not None and not requires_personal_answer(q)
+                            and profile.answer_sources.get(key) != "user"):
+                        profile.answers.pop(key)
+                        profile.answer_sources.pop(key, None)
+                        removed_legacy = True
+                except (ValueError, TypeError):
+                    continue
+        if removed_legacy:
+            backup = path.with_name(path.stem + '-before-workstyle-v3' + path.suffix)
+            if not backup.exists():
+                atomic_json(backup, raw)
         return profile
 
     def save(self, path: Path) -> None:
@@ -120,7 +152,14 @@ class Profile:
     def remember(self, q: Question, answer: Answer) -> None:
         validate_answer(q, answer)
         values = [o.label for o in q.options if o.id in answer.option_ids] if q.options else [answer.value or ""]
-        self.answers[self.key(q)] = values
+        key = self.key(q)
+        prior_source = self.answer_sources.get(key)
+        if answer.source in {"profile", "memory", "browser"} and self.answers.get(key) == values and prior_source:
+            source = prior_source
+        else:
+            source = answer.source
+        self.answers[key] = values
+        self.answer_sources[key] = source
 
     def lookup(self, q: Question) -> Answer | None:
         values = self.answers.get(self.key(q))

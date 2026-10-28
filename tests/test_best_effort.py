@@ -56,9 +56,9 @@ def test_disabled_choices_and_empty_enabled_list_are_not_clicked():
         fallback_answer(Question('q', 'Waiting', 'radio', (Option('x', 'Unavailable', disabled=True),)))
 
 
-@pytest.mark.parametrize('prompt,expected', [('You regularly make new friends.', 'b'),
-                                         ('I ignore safety procedures.', 'f'),
-                                         ('I never ignore safety procedures.', 'b')])
+@pytest.mark.parametrize('prompt,expected', [('You regularly make new friends.', 'c'),
+                                         ('I ignore safety procedures.', 'g'),
+                                         ('I never ignore safety procedures.', 'a')])
 def test_personality_fallback_including_reported_friends_question(prompt, expected):
     labels = ['I strongly agree', 'I moderately agree', 'I agree', 'I am not sure',
               'I disagree', 'I moderately disagree', 'I strongly disagree']
@@ -191,7 +191,7 @@ def test_sixty_question_run_with_bad_model_output_and_error_banners_never_asks(b
     result, events = run_engine(browser, ai=ai)
     assert result == 'complete'
     assert browser.page.evaluate('window.clicks') == 60
-    assert ai.calls == 1  # Numbered paraphrases use automatic saved memory.
+    assert ai.calls == 0  # Common work-style statements do not wait for inference.
     assert not any(e['code'] == 'paused' for e in events)
 
 

@@ -26,7 +26,7 @@
   const group = el => el.closest('fieldset,[role="radiogroup"],[data-question],.question,[role="group"]');
   const prompt = (el, container) => clean(
     (container && (labelled(container) || container.getAttribute('aria-label')
-      || text(container.querySelector('legend,[data-prompt],.question-text,h1,h2,h3,h4'))))
+      || text(container.querySelector('legend,[data-prompt],.question-text,.statement,.question-title,.input__label,[role="heading"],h1,h2,h3,h4'))))
     || label(el) || 'Unlabeled question');
   const globalProse = clean(all('p,[data-context],.scenario-text,[data-scenario],.instructions')
     .filter(el => visible(el) && !el.closest('label,[role="option"],[role="timer"],.timer,.countdown,[role="alert"],.error,.validation-error,[aria-live]')
@@ -44,9 +44,32 @@
     || el.getAttribute('aria-selected') === 'true';
   const invalid = el => !!(el.willValidate && !el.validity.valid)
     || (!el.willValidate && el.getAttribute('aria-invalid') === 'true');
+  const scaleLabels = (peers, container) => {
+    if (!container || ![3,5,7].includes(peers.length)) return null;
+    const anchors = Array.from(container.querySelectorAll('span,div,p,label'))
+      .filter(el => visible(el) && !el.querySelector('input,button,[role="radio"]')
+        && /^(?:agree|disagree)$/i.test(text(el)));
+    const agree = anchors.find(el => /^agree$/i.test(text(el)));
+    const disagree = anchors.find(el => /^disagree$/i.test(text(el)));
+    if (!agree || !disagree) return null;
+    const center = el => {const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};};
+    const points = peers.map(p => center(visible(p) ? p : Array.from(p.labels||[]).find(visible) || p));
+    const axis = Math.abs(center(agree).x-center(disagree).x) > Math.abs(center(agree).y-center(disagree).y) ? 'x' : 'y';
+    const order = peers.map((p,i)=>({p,value:points[i][axis]})).sort((a,b)=>a.value-b.value);
+    if (new Set(order.map(v=>v.value)).size !== peers.length) return null;
+    const lower = order[0].value, upper = order[order.length-1].value;
+    const a = center(agree)[axis], d = center(disagree)[axis];
+    if (!(Math.min(a,d)<lower && Math.max(a,d)>upper)) return null;
+    const captions = peers.length===7 ? ['Strongly agree','Moderately agree','Agree','Neither agree nor disagree','Disagree','Moderately disagree','Strongly disagree']
+      : peers.length===5 ? ['Strongly agree','Agree','Neither agree nor disagree','Disagree','Strongly disagree']
+      : ['Agree','Neither agree nor disagree','Disagree'];
+    if (a>d) captions.reverse();
+    return new Map(order.map((item,i)=>[item.p,captions[i]]));
+  };
   const questions = [], used = new Set();
   const controls = all('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]),textarea,select,[role="radio"],[role="checkbox"],[role="combobox"]')
-    .filter(visible);
+    .filter(el => visible(el) || (el.matches('input[type="radio"],input[type="checkbox"]')
+      && Array.from(el.labels||[]).some(visible)));
   for (const el of controls) {
     if (used.has(el) || disabled(el)) continue;
     const role = el.getAttribute('role');
@@ -60,8 +83,9 @@
         return container ? group(other) === container : other === el;
       });
       peers.forEach(p => used.add(p));
+      const scale = type === 'radio' ? scaleLabels(peers, container) : null;
       questions.push({id: id(el), prompt: prompt(el, container), context: context(el), kind: type,
-        options: peers.map(p => ({id: id(p), label: label(p) || p.value || 'Unlabeled option',
+        options: peers.map(p => ({id: id(p), label: scale?.get(p) || label(p) || p.value || 'Unlabeled option',
           selected: checked(p), disabled: disabled(p)})), value: '',
         required: peers.some(p => p.required || p.getAttribute('aria-required') === 'true'),
         invalid: peers.some(p => p.willValidate && !p.validity.valid)

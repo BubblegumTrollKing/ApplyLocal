@@ -20,13 +20,33 @@ def self_test(gui: bool = False, browser: bool = False) -> dict:
     driver, cli = compute_driver_executable()
     assert Path(driver).is_file() and Path(cli).is_file()
     assert not Profile().facts
+    from .domain import Option, Question
+    from .workstyle import workstyle_answer
+    labels = ('Strongly agree', 'Moderately agree', 'Agree', 'Neither agree nor disagree',
+              'Disagree', 'Moderately disagree', 'Strongly disagree')
+    prompts = ('You enjoy exploring unfamiliar ideas and viewpoints.',
+               'You are not easily swayed by emotional arguments.', 'You struggle with deadlines.')
+    selections = [workstyle_answer(Question('q', prompt, 'radio',
+                  tuple(Option(str(i), text) for i, text in enumerate(labels)))).option_ids
+                  for prompt in prompts]
+    assert selections == [('1',), ('1',), ('6',)]
     result = {"status": "passed", "python": sys.version.split()[0],
-              "resources": True, "tkinter_tcl": True, "playwright_driver": True}
+              "resources": True, "tkinter_tcl": True, "playwright_driver": True,
+              "workstyle_polarity": True}
     if gui:
         from .gui import Application
         app = Application()
         app.update()
         assert app.start_button.winfo_exists()
+        app.geometry('660x440')
+        app.update()
+        app.scroll_host.canvas.yview_moveto(1)
+        app.update()
+        assert app.scroll_host.canvas.yview()[1] >= 0.99
+        assert app.stop_button.winfo_ismapped()
+        assert app.stop_button.winfo_rooty()+app.stop_button.winfo_height() <= app.winfo_rooty()+app.winfo_height()
+        result['window_scroll'] = True
+        result['stop_button_visible'] = True
         app.after(100, app.shutdown)
         app.mainloop()
         result["gui_window"] = True

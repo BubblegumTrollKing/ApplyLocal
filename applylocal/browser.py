@@ -226,7 +226,14 @@ class BrowserSession:
                     el = self._node(option.id)
                     native = el.evaluate("el => el.tagName === 'INPUT'")
                     if native:
-                        el.set_checked(wanted, timeout=2000, no_wait_after=True)
+                        if el.is_visible():
+                            el.set_checked(wanted, timeout=2000, no_wait_after=True)
+                        else:
+                            label_handle = el.evaluate_handle("el => Array.from(el.labels || []).find(label => {const r=label.getBoundingClientRect();return r.width>0&&r.height>0&&getComputedStyle(label).visibility!=='hidden';}) || null")
+                            label_element = label_handle.as_element()
+                            if label_element is None:
+                                raise RecheckRequired("Waiting for a visible label for this choice.")
+                            label_element.click(timeout=2000, no_wait_after=True)
                     elif question.kind == "checkbox" or wanted:
                         el.click(timeout=2000, no_wait_after=True)
             else:

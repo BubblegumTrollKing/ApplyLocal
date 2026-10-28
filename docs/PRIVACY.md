@@ -8,7 +8,8 @@ Saved files under `%LOCALAPPDATA%\ApplyLocal`:
 
 | Item | Contains |
 | --- | --- |
-| `profile.json` | Readable facts and automatically saved question text, context, choices and selected answers used for exact/paraphrase reuse and related-question reasoning |
+| `profile-before-workstyle-v3.json` | Local backup of the original profile when old automatic agreement-scale predictions are migrated |
+| `profile.json` | Decision policy version, answer sources, readable facts and automatically saved question text, context, choices and selected answers used for exact/paraphrase reuse and related-question reasoning |
 | `settings.json` | Local endpoints, model names and UI choices |
 | `activity.jsonl` and rotated backups | UTC timestamp, event code, verified-answer count and page count |
 | `browser-profile/` | Browser-managed persistent cookies, login sessions, history and site data |

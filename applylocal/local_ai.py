@@ -17,6 +17,7 @@ from .domain import (Answer, AssistanceRequired, PersonalFactRequired, Question,
                      check_stop, validate_answer)
 from .decisions import SINGLE, choice_schema, fallback_answer, repair_choice_json
 from .policy import page_restriction, question_restriction, requires_personal_answer
+from .workstyle import workstyle_answer
 
 
 def loopback_url(url: str) -> str:
@@ -162,7 +163,7 @@ class LocalAI:
         self._checked.add(key)
 
     def structured(self, model: str, system: str, payload: dict,
-                   schema: dict, image: bytes | None = None) -> dict:
+                   schema: dict, image: bytes | None = None, *, validate_output=True) -> dict:
         if len(json.dumps(payload)) > 16000:
             raise AssistanceRequired("The question is too long for dependable local interpretation. Answer it manually.")
         self.check_model(model, vision=image is not None)
@@ -172,7 +173,8 @@ class LocalAI:
         data = {"model": model, "stream": False, "format": schema,
                 "messages": [{"role": "system", "content": system}, message],
                 "options": {"temperature": 0, "seed": 42, "num_ctx": 8192,
-                            "num_predict": (128 if "choice_indices" in schema.get("properties", {})
+                            "num_predict": (384 if "answers" in schema.get("properties", {}) else
+                                            128 if "choice_indices" in schema.get("properties", {})
                                             else 512 if schema is DECISION_SCHEMA else 2048)},
                 "keep_alive": "5m"}
         try:
@@ -182,7 +184,8 @@ class LocalAI:
                 answer = repair_choice_json(answer, payload["options"],
                     single=not payload.get("select_all", False),
                     required=schema["properties"]["choice_indices"]["minItems"] > 0)
-            validate(answer, schema)
+            if validate_output:
+                validate(answer, schema)
         except (KeyError, TypeError, ValueError, ValidationError) as exc:
             raise AssistanceRequired("The local model returned an invalid structured answer.") from exc
         check_stop(self.stop)
@@ -194,6 +197,9 @@ class LocalAI:
             raise AssistanceRequired(restriction)
         if requires_personal_answer(q):
             raise PersonalFactRequired("This question requires an actual personal fact that is not in your profile.")
+        immediate = workstyle_answer(q)
+        if immediate:
+            return immediate
         if q.options:
             return self.choose_available(model, q, memories or [])
         payload = {"question": q.prompt, "context": q.context, "type": q.kind,
@@ -253,3 +259,56 @@ class LocalAI:
             return fallback_answer(q)
         finally:
             self._choice_deadline = previous_deadline
+
+    def decide_many(self, model: str, questions: list[Question], threshold: float,
+                    *, memories: dict[str, list[dict]] | None = None) -> dict[str, Answer]:
+        """One constrained request for a page's unfamiliar nonfactual choices."""
+        result, batch, payloads, properties = {}, [], [], {}
+        for q in questions[:8]:
+            if (not q.options or requires_personal_answer(q) or question_restriction(q)
+                    or page_restriction(q.prompt + " " + q.context)):
+                continue
+            immediate = workstyle_answer(q)
+            if immediate:
+                result[q.signature] = immediate
+                continue
+            key = f"q{len(batch)}"
+            data = {"key": key, "question": q.prompt, "context": q.context,
+                    "options": [{"index": i, "id": o.id, "label": o.label, "disabled": o.disabled}
+                                for i, o in enumerate(q.options)],
+                    "select_all": q.kind not in SINGLE,
+                    "answer_history": (memories or {}).get(q.signature, [])[:2]}
+            if len(json.dumps({"questions": payloads + [data]})) > 14000:
+                break
+            batch.append(q)
+            payloads.append(data)
+            properties[key] = choice_schema(q)["properties"]["choice_indices"]
+        if not batch:
+            return result
+        schema = {"type": "object", "additionalProperties": False, "properties": {
+            "answers": {"type": "object", "additionalProperties": False,
+                        "properties": properties, "required": list(properties)}}, "required": ["answers"]}
+        previous_deadline = self._choice_deadline
+        self._choice_deadline = time.monotonic() + 8
+        try:
+            raw = self.structured(model, CHOICE_SYSTEM +
+                '\nFor this batch return {"answers":{"q0":[index],"q1":[index]}}. '
+                'Judge each statement separately. Opposite meanings require opposite scale directions. '
+                'Do not repeat a position without comparing the question meanings.',
+                {"questions": payloads}, schema, validate_output=False)
+            values = raw.get("answers", {}) if isinstance(raw, dict) else {}
+        except AssistanceRequired:
+            values = {}
+        finally:
+            self._choice_deadline = previous_deadline
+        for q, data in zip(batch, payloads):
+            check_stop(self.stop)
+            try:
+                chosen = repair_choice_json(values.get(data["key"]), data["options"],
+                                            single=q.kind in SINGLE, required=q.required)
+                answer = Answer(tuple(q.options[i].id for i in chosen["choice_indices"]))
+                validate_answer(q, answer)
+            except (AssistanceRequired, AttributeError, TypeError):
+                answer = fallback_answer(q)
+            result[q.signature] = answer
+        return result

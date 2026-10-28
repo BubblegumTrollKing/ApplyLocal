@@ -14,6 +14,7 @@ from .policy import (can_reason_autonomously, page_restriction, question_restric
                      requires_personal_answer)
 from .storage import Profile, Settings
 from .vision import VisionFallback
+from .workstyle import contradicts_workstyle, workstyle_answer
 
 
 @dataclass
@@ -74,6 +75,10 @@ class Engine:
             self.request_id = ""
 
     def choose(self, q: Question) -> Answer:
+        immediate = workstyle_answer(q)
+        if immediate:
+            self.event("workstyle", "Choosing a professional work-style response immediately.")
+            return immediate
         try:
             answer = self.inflight.lookup(q)
         except AssistanceRequired:
@@ -105,8 +110,9 @@ class Engine:
     def remember(self, q, answer):
         key = self.profile.key(q)
         previous = self.profile.answers.get(key)
+        previous_source = self.profile.answer_sources.get(key)
         self.profile.remember(q, answer)
-        if self.profile.answers.get(key) != previous:
+        if self.profile.answers.get(key) != previous or self.profile.answer_sources.get(key) != previous_source:
             try:
                 self.save_profile()
             except OSError:
@@ -125,7 +131,10 @@ class Engine:
                     return False
             self.verified_states[q.signature] = self.answer_state(q)
             return True
-        if q.answered and not q.invalid and self.inflight.lookup(q) is None:
+        correction = contradicts_workstyle(q)
+        if correction:
+            self.event("correcting", "Correcting a work-style response that points against the requested candidate profile.")
+        if q.answered and not q.invalid and not correction and self.inflight.lookup(q) is None:
             existing = Answer(tuple(o.id for o in q.options if o.selected),
                               None if q.options else q.value, source="browser")
             self.remember(q, existing)
@@ -160,6 +169,22 @@ class Engine:
         self.answered += 1
         self.event("verified", "Answer verified in the browser.")
         return True
+
+    def prepare_page(self, pending):
+        if not hasattr(self.ai, "decide_many"):
+            return
+        unknown = [q for q in pending if not q.answered and q.options
+                   and not question_restriction(q) and not requires_personal_answer(q)
+                   and can_reason_autonomously(q) and workstyle_answer(q) is None
+                   and self.profile.recall(q) is None and self.inflight.recall(q) is None][:8]
+        if len(unknown) < 2:
+            return
+        self.event("reasoning", f"Choosing {len(unknown)} unfamiliar responses in one local AI call…")
+        answers = self.ai.decide_many(self.settings.text_model, unknown, self.settings.confidence,
+                                     memories={q.signature: self.profile.related(q) for q in unknown})
+        for q in unknown:
+            if q.signature in answers:
+                self.inflight.remember(q, normalize_model_answer(q, answers[q.signature]))
 
     def run(self):
         finished_on_page = set()
@@ -220,6 +245,8 @@ class Engine:
                     pending = [q for q in snapshot.questions if q.signature not in finished_on_page or q.invalid]
                     if pending:
                         q = pending[0]
+                        if workstyle_answer(q) is None:
+                            self.prepare_page(pending)
                         if self.answer_question(snapshot, q):
                             finished_on_page.add(q.signature)
                         continue

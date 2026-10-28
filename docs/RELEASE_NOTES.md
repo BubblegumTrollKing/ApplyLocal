@@ -1,14 +1,14 @@
-ApplyLocal 1.2.0 — pick an available answer, keep rechecking, reuse your browser.
+ApplyLocal 1.3.0 — faster professional work-style answers and a scrollable window.
 
-Download **ApplyLocal-Windows-x64.zip**, extract it, and run **ApplyLocal.exe**. Existing models and saved data are reused.
+Download **ApplyLocal-Windows-x64.zip**, extract it and run **ApplyLocal.exe**. The window title shows 1.3.0. Existing models and factual data are reused.
 
-- Closed choices use one compact integer-constrained model call. Malformed IDs, label answers and extra non-null text fields are repaired. If the model still cannot choose, an enabled best-effort fallback proceeds without a question-review prompt. Imperfect options and uncertainty no longer ask you to decide. The inference budget is eight seconds per choice.
-- Validation is rechecked from live controls. Empty error containers, stale ARIA flags, error banners and required fields on newly opened pages no longer open a manual validation dialog.
-- Navigation and operational failures keep being observed until progress or Stop. There is no recheck button. Click retries remain bounded, and uncertain server submissions are not repeated.
-- A fact entered directly in the browser is detected automatically even while a fact-entry prompt is visible. Consent/identity steps also resume on observed browser changes. Unknown concrete applicant facts are not invented; human-only assessments stop the run.
-- Browser selection includes Chrome, Edge, Brave, Chromium and a custom executable. Existing-session mode discovers a local DevToolsActivePort endpoint and attaches to the open tabs. In Chrome 144+, enable Remote Debugging through Enable browser access, then Refresh tabs and approve Chrome's connection prompt. Other browsers need an available CDP endpoint. Firefox is unsupported.
-- Automatic memory ignores question/page numbering when matching equivalent questions. The regression suite includes a 60-question run with malformed model answers and stale error banners, without user prompts.
+- Fixes the blanket-agreement fallback. Clear work-style statements use immediate, polarity-aware professional judgments. “You struggle with deadlines” selects disagreement; “I never miss deadlines” selects agreement. Response strength varies by behavior. Common statements need no model inference.
+- Unfamiliar questions on a page share one compact local AI request. Each returned answer is validated independently. An unreadable model response no longer makes every unfamiliar scale positive; the fallback tends toward neutral.
+- Recognizes statement captions, bare-circle agreement scales with visible endpoint labels, reversed scales and hidden native inputs with visible labels. It verifies the actual selected state after acting.
+- Invalidates old automatic scale predictions while keeping factual values and identified user answers. The original local profile is backed up. Clearly contradictory visible work-style selections from the old version are corrected automatically.
+- Makes the entire main window scroll with the mouse wheel, scrollbar and navigation keys. Start and emergency Stop stay pinned at the bottom. Setup and browser controls fit narrower windows; larger text no longer hides the bottom of the app. Profile/settings dialogs scroll with Save pinned outside the scroll area.
+- Keeps automatic rechecks, automatic memory, existing-browser connections, protection for unknown concrete facts, and appropriate handling of identity/consent/human-only steps.
 
-Publication requires the full Windows suite plus source and packaged-executable GUI/browser smoke checks. **ApplyLocal-test-evidence.zip** contains actual results and the binary checksum. The application is unsigned.
+The tests cover the reported three statements, many distinct positive/negative and double-negation items, a 60-item varied questionnaire, scale direction, old-answer correction/migration, one-request page batching, and small-window/larger-text scrolling. The source and packaged-executable smoke checks exercise both the reported polarity and whole-window scroll/Stop behavior before release publication. Actual Windows results and checksums are in **ApplyLocal-test-evidence.zip**.
 
-The browser-attachment tests use a controlled Chromium profile and its real debugging endpoint. Chrome's newer permission dialog, individual Chrome/Edge/Brave versions, live employer sites and real-model answer accuracy still need real-world testing. Best-effort fallback is intentionally permitted to choose an imperfect answer; it does not establish an employer's scoring key.
+Employer scoring and real-model accuracy across arbitrary sites are not established by these controlled checks. Chrome's permission-based existing-session dialog still needs real-world testing. The application is unsigned. Python is bundled; no new model download is required for this upgrade.

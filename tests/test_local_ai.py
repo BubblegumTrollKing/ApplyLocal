@@ -183,3 +183,63 @@ def test_real_http_non_null_value_and_label_format_are_repaired_in_one_call(fake
     assert answer.value is None
     assert answer.source == 'model'
     assert len([r for r in state['requests'] if r[0] == '/api/chat']) == 1
+
+
+def test_known_negative_workstyle_is_immediate_even_if_model_would_agree(fake_ollama):
+    url, state = fake_ollama
+    item = Question('q', 'You struggle with deadlines.', 'radio',
+                    (Option('yes','Agree'), Option('no','Disagree')))
+    answer = LocalAI(url, threading.Event()).decide('test:local', item, 0.9)
+    assert answer.option_ids == ('no',)
+    assert answer.source == 'workstyle'
+    assert state['requests'] == []
+
+
+def test_unknown_questions_use_one_batch_request_and_distinct_selections(fake_ollama):
+    url, state = fake_ollama
+    state['reply'] = {'answers': {'q0': [1], 'q1': [0]}}
+    questions = [Question('a','Which tool should be used?', 'radio', (Option('a0','Tool A'),Option('a1','Tool B'))),
+                 Question('b','Which document is appropriate?', 'radio', (Option('b0','Document A'),Option('b1','Document B')))]
+    answers = LocalAI(url, threading.Event()).decide_many('test:local', questions, 0.9)
+    assert answers[questions[0].signature].option_ids == ('a1',)
+    assert answers[questions[1].signature].option_ids == ('b0',)
+    chats = [r[1] for r in state['requests'] if r[0] == '/api/chat']
+    assert len(chats) == 1
+    assert chats[0]['format']['properties']['answers']['properties']['q0']['items']['enum'] == [0,1]
+
+
+def test_one_corrupt_batch_item_does_not_discard_other_valid_answers(fake_ollama):
+    url, state = fake_ollama
+    state['reply'] = {'answers': {'q0': [1], 'q1': [999]}}
+    questions = [Question('a','Which tool should be used?', 'radio', (Option('a0','Tool A'),Option('a1','Tool B'))),
+                 Question('b','Which document is appropriate?', 'radio', (Option('b0','Document A'),Option('b1','Document B')))]
+    answers = LocalAI(url, threading.Event()).decide_many('test:local', questions, 0.9)
+    assert answers[questions[0].signature].option_ids == ('a1',)
+    assert answers[questions[0].signature].source == 'model'
+    assert answers[questions[1].signature].source == 'fallback'
+    assert len([r for r in state['requests'] if r[0] == '/api/chat']) == 1
+
+
+def test_batch_does_not_send_concrete_facts_or_restricted_steps(fake_ollama):
+    url, state = fake_ollama
+    questions = [Question('a','Are you available on weekends?','radio',(Option('a','Yes'),Option('b','No'))),
+                 Question('b','I certify these answers are true','radio',(Option('a','Yes'),Option('b','No')))]
+    assert LocalAI(url, threading.Event()).decide_many('test:local', questions, 0.9) == {}
+    assert state['requests'] == []
+
+
+@pytest.mark.browser
+def test_engine_batches_unfamiliar_page_and_applies_each_distinct_answer(browser, fake_ollama):
+    from applylocal.storage import Profile
+    from test_engine import run_engine
+    url,state=fake_ollama
+    state['reply']={'answers':{'q0':[1],'q1':[0]}}
+    browser.page.set_content('''<fieldset><legend>Which tool should be used?</legend>
+    <label><input type=radio name=a>Tool A</label><label><input type=radio name=a>Tool B</label></fieldset>
+    <fieldset><legend>Which document is appropriate?</legend>
+    <label><input type=radio name=b>Document A</label><label><input type=radio name=b>Document B</label></fieldset>
+    <button onclick="window.choices=Array.from(document.querySelectorAll('input:checked')).map(e=>e.parentNode.textContent);document.body.innerHTML='<h1>Assessment complete</h1>'">Submit</button>''')
+    ai=LocalAI(url,browser.stop)
+    assert run_engine(browser,Profile(),ai=ai)[0]=='complete'
+    assert browser.page.evaluate('window.choices') == ['Tool B','Document A']
+    assert len([r for r in state['requests'] if r[0]=='/api/chat'])==1
